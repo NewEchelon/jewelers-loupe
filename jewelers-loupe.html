@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Loupe Bench</title>
+<title>Jewelers Loupe</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
@@ -121,6 +121,17 @@ input[type=range]{width:100%;accent-color:var(--brass)}
 
 .meter{height:6px;border-radius:3px;background:var(--raise);overflow:hidden}
 .meter div{height:100%;width:0;background:var(--ok)}
+.seg3{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.seg3 button{border:1px solid var(--line);background:var(--raise);border-radius:6px;padding:6px 0;cursor:pointer;font-size:13px}
+.seg3 button[aria-pressed=true]{border-color:var(--brass);color:var(--brass)}
+.swatches{display:flex;gap:8px;flex-wrap:wrap}
+.swatches button{width:26px;height:26px;border-radius:50%;background:var(--c);border:2px solid var(--line);cursor:pointer;padding:0}
+.swatches button[aria-pressed=true]{box-shadow:0 0 0 2px var(--bg),0 0 0 4px var(--fg)}
+#stage.t-draw{cursor:crosshair}
+#stage.t-overlay{cursor:move}
+.ovname{display:flex;align-items:center;gap:8px;font:12px var(--mono);color:var(--muted);min-width:0}
+.ovname img{width:44px;height:33px;object-fit:cover;border-radius:4px;background:#000;flex:none}
+.ovname span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .diag{list-style:none;margin:0;padding:0;display:grid;gap:5px}
 .diag li{display:grid;grid-template-columns:14px 1fr auto;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)}
 .diag li b{font:500 12px var(--mono);color:var(--fg);text-align:right}
@@ -142,7 +153,7 @@ input[type=range]{width:100%;accent-color:var(--brass)}
 <body>
 
 <header class="bar">
-  <div class="brand"><b>Loupe Bench</b><span>microscope viewer</span></div>
+  <div class="brand"><b>Jewelers Loupe</b><span>microscope viewer</span></div>
   <div class="field">
     <label for="camSel">Camera</label>
     <select id="camSel"><option value="">Not connected</option></select>
@@ -176,6 +187,8 @@ input[type=range]{width:100%;accent-color:var(--brass)}
       <button data-tool="pan" aria-pressed="true">Pan<kbd>V</kbd></button>
       <button data-tool="measure" aria-pressed="false">Measure<kbd>M</kbd></button>
       <button data-tool="calibrate" aria-pressed="false">Calibrate<kbd>C</kbd></button>
+      <button data-tool="draw" aria-pressed="false">Draw<kbd>D</kbd></button>
+      <button data-tool="overlay" aria-pressed="false" id="ovTool" hidden>Move overlay</button>
       <button id="fsBtn" title="Full screen (Shift+F)">⛶ Full screen</button>
     </div>
 
@@ -189,8 +202,9 @@ input[type=range]{width:100%;accent-color:var(--brass)}
         <h3>Set the scale</h3>
         <p id="calMsg">Your line is 0 px long. Enter the real distance it spans.</p>
         <div class="row">
-          <label for="calLen">Real length (mm)</label>
-          <input type="number" id="calLen" step="any" min="0.001" value="1" required>
+          <label for="calLen">Real length</label>
+          <div style="display:flex;gap:6px"><input type="number" id="calLen" step="any" min="0.0001" value="1" required style="flex:1">
+          <select id="calUnit" aria-label="Unit"><option value="mm">mm</option><option value="um">µm</option><option value="cm">cm</option><option value="in">in</option><option value="mil">thou</option></select></div>
         </div>
         <div class="row">
           <label for="calName">Name this magnification</label>
@@ -219,7 +233,7 @@ input[type=range]{width:100%;accent-color:var(--brass)}
       </div>
       <button class="btn" id="fsBtn2">⛶ Full screen <kbd>⇧F</kbd></button>
       <label class="check"><input type="checkbox" id="optClean"> Clean view for streaming (hide labels &amp; toolbar)</label>
-      <label class="check"><input type="checkbox" id="optOverlay" checked> Burn measurements &amp; scale bar into photos</label>
+      <label class="check"><input type="checkbox" id="optOverlay" checked> Include measurements, rulers, drawings &amp; scale bar in photos</label>
       <label class="check"><input type="checkbox" id="optAutosave"> Save each photo to Downloads automatically</label>
     </div>
 
@@ -244,8 +258,80 @@ input[type=range]{width:100%;accent-color:var(--brass)}
         <button class="btn small" id="profDel" title="Delete this scale">Delete</button>
       </div>
       <div class="readout" id="scaleReadout">Uncalibrated · measuring in pixels</div>
+      <div class="field"><label for="unitSel">Units</label>
+        <select id="unitSel">
+          <option value="auto">Auto (mm / µm)</option>
+          <option value="mm">Millimetres (mm)</option>
+          <option value="um">Microns (µm)</option>
+          <option value="cm">Centimetres (cm)</option>
+          <option value="in">Inches (in)</option>
+          <option value="mil">Thousandths (thou / mil)</option>
+        </select></div>
       <label class="check"><input type="checkbox" id="optScalebar" checked> Show scale bar</label>
       <p class="hint">Put a ruler or stage micrometer under the lens, pick <b>Calibrate</b>, and drag across a known distance. Save one scale per zoom setting.</p>
+    </div>
+
+    <div class="sec">
+      <h2>Image overlay <button class="btn small ghost" id="ovRemove" hidden>Remove</button></h2>
+      <div class="grid2">
+        <button class="btn" id="ovLoad">Load image…</button>
+        <button class="btn" id="ovFrame" title="Ghost the current view to line up a before/after">Use current view</button>
+      </div>
+      <input type="file" id="ovFile" accept="image/*" hidden>
+      <div id="ovCtl" hidden style="display:grid;gap:10px">
+        <div class="ovname"><img id="ovThumb" alt=""><span id="ovName"></span></div>
+        <div class="seg3" id="ovMode">
+          <button data-v="specimen" aria-pressed="true" title="Moves and zooms with the specimen">On specimen</button>
+          <button data-v="screen" aria-pressed="false" title="Fills the view, ignores zoom">Full view</button>
+          <button data-v="corner" aria-pressed="false" title="Fixed in a corner, like a logo">Corner</button>
+        </div>
+        <label class="check"><input type="checkbox" id="ovShow" checked> Show overlay <kbd style="font:11px var(--mono);opacity:.6">O</kbd></label>
+        <div class="slider"><label for="ovOp">Opacity</label><input type="range" id="ovOp" min="5" max="100" value="50"><span id="ovOpV">50%</span></div>
+        <div class="field"><label for="ovBlend">Blend</label>
+          <select id="ovBlend">
+            <option value="source-over">Normal</option>
+            <option value="difference">Difference (alignment)</option>
+            <option value="multiply">Multiply (dark lines only)</option>
+            <option value="screen">Screen (light lines only)</option>
+          </select></div>
+        <div id="ovSpec" style="display:grid;gap:10px">
+          <div class="slider"><label for="ovSize">Size</label><input type="range" id="ovSize" min="5" max="400" value="100"><span id="ovSizeV">100%</span></div>
+          <div class="slider"><label for="ovRot">Rotation</label><input type="range" id="ovRot" min="-180" max="180" value="0"><span id="ovRotV">0°</span></div>
+          <div class="grid2"><button class="btn small" id="ovFit">Fit to view</button><button class="btn small" id="ovFlip">Flip ↔</button></div>
+          <p class="hint">Choose <b>Move overlay</b> in the toolbar, then drag to position it, scroll to resize, and Shift-scroll to rotate.</p>
+        </div>
+        <div id="ovCorner" style="display:grid;gap:10px" hidden>
+          <div class="field"><label for="ovCornerSel">Corner</label>
+            <select id="ovCornerSel"><option value="br">Bottom right</option><option value="bl">Bottom left</option><option value="tr">Top right</option><option value="tl">Top left</option></select></div>
+          <div class="slider"><label for="ovCSize">Size</label><input type="range" id="ovCSize" min="5" max="60" value="18"><span id="ovCSizeV">18%</span></div>
+        </div>
+      </div>
+      <p class="hint" id="ovHint">Lay a design sketch, CAD render or reference photo over the live view. Overlays show in recordings, photos and streams.</p>
+    </div>
+
+    <div class="sec">
+      <h2>Rulers <button class="btn small ghost" id="rClear">Remove all</button></h2>
+      <button class="btn" id="rAdd">+ Add ruler</button>
+      <p class="hint">Drag a ruler to move it, or drag either end to turn and stretch it. Rulers stay on the specimen when you zoom. Use <b>Pan</b> (V) to move them.</p>
+    </div>
+
+    <div class="sec">
+      <h2>Draw <span style="display:flex;gap:4px"><button class="btn small ghost" id="inkUndo">Undo <kbd>Z</kbd></button><button class="btn small ghost" id="inkClear">Clear</button></span></h2>
+      <div class="seg3" id="inkShape">
+        <button data-v="pen" aria-pressed="true">Pen</button>
+        <button data-v="arrow" aria-pressed="false">Arrow</button>
+        <button data-v="circle" aria-pressed="false">Circle</button>
+      </div>
+      <div class="swatches" id="inkColor">
+        <button data-v="#e5564b" style="--c:#e5564b" aria-label="Red" aria-pressed="true"></button>
+        <button data-v="#cfa75e" style="--c:#cfa75e" aria-label="Gold" aria-pressed="false"></button>
+        <button data-v="#6fd3e0" style="--c:#6fd3e0" aria-label="Cyan" aria-pressed="false"></button>
+        <button data-v="#7cc48a" style="--c:#7cc48a" aria-label="Green" aria-pressed="false"></button>
+        <button data-v="#ffffff" style="--c:#ffffff" aria-label="White" aria-pressed="false"></button>
+        <button data-v="#111111" style="--c:#111111" aria-label="Black" aria-pressed="false"></button>
+      </div>
+      <div class="slider"><label for="inkW">Line width</label><input type="range" id="inkW" min="1" max="16" value="4"><span id="inkWv">4</span></div>
+      <p class="hint">Choose <b>Draw</b> (D) and mark up the view. Drawings stick to the specimen, and show in recordings, photos and live streams.</p>
     </div>
 
     <div class="sec">
@@ -293,6 +379,7 @@ input[type=range]{width:100%;accent-color:var(--brass)}
       <h2>This session <span id="gCount" class="readout" style="color:var(--muted)"></span></h2>
       <div class="gallery" id="gallery"></div>
       <p class="hint" id="gEmpty">Photos and clips appear here. Click Save to put one in Downloads.</p>
+      <a class="btn" href="loupe-cut.html" target="_blank" rel="noopener">Open Loupe Cut editor ↗</a>
     </div>
   </aside>
 </main>
@@ -329,6 +416,7 @@ const S = {
   rot: store.get("rot",0), flipH: store.get("flipH",false), flipV: store.get("flipV",false),
   adj: Object.assign({b:100,c:100,s:100,g:false}, store.get("adj",{})), overlay: store.get("overlay","none"),
   tool:"pan", measures:[], draft:null, nextId:1,
+  unit: store.get("unit","auto"), rulers:[], ink:[], pen: Object.assign({shape:"pen", color:"#e5564b", w:4}, store.get("pen",{})),
   cal: store.get("cal", {profiles:{}, active:""}),
   scalebar: store.get("scalebar",true), burn: store.get("burn",true), autosave:false,
   rec:null, recStart:0, gallery:[], dpr:1
@@ -385,12 +473,21 @@ function viewMatrix(s){
 const filterStr = () => `brightness(${S.adj.b}%) contrast(${S.adj.c}%) saturate(${S.adj.s}%)${S.adj.g?" grayscale(1)":""}`;
 const activeProfile = () => S.cal.profiles[S.cal.active] || null;
 function pxPerMm(s){ const p=activeProfile(); return p ? p.pxPerMm * (s.w / p.refWidth) : 0; }
+// Units: factor = how many of the unit in one millimetre.
+const UNITS = { mm:{f:1,label:"mm"}, um:{f:1000,label:"µm"}, cm:{f:0.1,label:"cm"}, in:{f:1/25.4,label:"in"}, mil:{f:1000/25.4,label:"thou"} };
+function unitFor(mm){ if (S.unit!=="auto") return S.unit; return mm < 1 ? "um" : "mm"; }
+function fmtNum(v){ const a=Math.abs(v); return a>=1000 ? v.toFixed(0) : a>=100 ? v.toFixed(1) : a>=10 ? v.toFixed(2) : v.toFixed(3); }
+function fmtMm(mm, key){ key=key||unitFor(mm); const U=UNITS[key], v=mm*U.f;
+  if (key==="um") return (v<10? v.toFixed(1) : Math.round(v)) + " µm";
+  return fmtNum(v) + " " + U.label; }
 function fmtLen(px, s){
   const ppm = pxPerMm(s);
   if (!ppm) return Math.round(px) + " px";
-  const mm = px/ppm;
-  return mm < 1 ? Math.round(mm*1000) + " µm" : mm.toFixed(mm < 10 ? 3 : 2) + " mm";
+  return fmtMm(px/ppm);
 }
+// Nice tick value (1, 2, 5 × 10^n) no smaller than v.
+function niceUp(v){ const e=Math.pow(10,Math.floor(Math.log10(v))), m=v/e; return (m<=1?1:m<=2?2:m<=5?5:10)*e; }
+function niceDown(v){ const e=Math.pow(10,Math.floor(Math.log10(v))), m=v/e; return (m>=5?5:m>=2?2:1)*e; }
 const stamp = () => { const d=new Date(), p=n=>String(n).padStart(2,"0");
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; };
 
@@ -444,16 +541,82 @@ function drawMarks(g, m, s, k){
     drawLine(g, m, d.a, d.b, k, calib?COLORS.calib:COLORS.measure, calib ? Math.round(px)+" px" : fmtLen(px,s));
   }
 }
+function drawRulers(g, m, s, k){
+  const ppm=pxPerMm(s);
+  S.rulers.forEach(r=>{
+    const pa=m.transformPoint(new DOMPoint(r.a.x,r.a.y)), pb=m.transformPoint(new DOMPoint(r.b.x,r.b.y));
+    const Ls=Math.hypot(pb.x-pa.x,pb.y-pa.y); if (Ls<4) return;
+    const ux=(pb.x-pa.x)/Ls, uy=(pb.y-pa.y)/Ls, nx=-uy, ny=ux;
+    const lenImg=Math.hypot(r.b.x-r.a.x,r.b.y-r.a.y);
+    // length of the ruler in display units
+    let key, total;
+    if (ppm){ const mm=lenImg/ppm; key = S.unit==="auto" ? (mm<1.5?"um":"mm") : S.unit; total=mm*UNITS[key].f; }
+    else { key="px"; total=lenImg; }
+    const perScreen = total/Ls;                      // units per screen px
+    const minor = niceUp(perScreen*7*k);             // ≥7px between ticks
+    const labelEvery = (minor/perScreen)*10 >= 56*k ? 10 : 20;
+    const W=30*k, g2=g;
+    g2.save();
+    g2.translate(pa.x,pa.y); g2.rotate(Math.atan2(uy,ux));
+    // body
+    g2.fillStyle="rgba(246,241,228,.86)"; g2.strokeStyle="rgba(0,0,0,.55)"; g2.lineWidth=1*k;
+    g2.beginPath(); g2.rect(0,-W,Ls,W); g2.fill(); g2.stroke();
+    // ticks along the measuring edge (y=0 side)
+    g2.strokeStyle="#1b1a17"; g2.fillStyle="#1b1a17"; g2.lineWidth=Math.max(1,1*k);
+    g2.font=`500 ${10*k}px "IBM Plex Mono", Menlo, monospace`; g2.textAlign="center"; g2.textBaseline="alphabetic";
+    const n=Math.floor(total/minor+1e-6);
+    g2.beginPath();
+    for(let i=0;i<=n;i++){
+      const x=i*minor/perScreen, big=i%10===0, mid=i%5===0;
+      const len = big ? W*0.55 : mid ? W*0.38 : W*0.22;
+      g2.moveTo(x,0); g2.lineTo(x,-len);
+    }
+    g2.stroke();
+    for(let i=0;i<=n;i+=labelEvery){
+      const x=i*minor/perScreen; if (x>Ls-14*k && i>0) continue;
+      const v=i*minor; g2.fillText(String(+v.toFixed(6)), x, -W+11*k);
+    }
+    // unit tag + end grips
+    g2.textAlign="right"; g2.font=`600 ${10*k}px "IBM Plex Mono", Menlo, monospace`;
+    g2.fillText(key==="px"?"px · uncalibrated":UNITS[key].label, Ls-6*k, -W+11*k);
+    g2.fillStyle="rgba(207,167,94,.95)";
+    [0,Ls].forEach(x=>{ g2.beginPath(); g2.arc(x,-W/2,5*k,0,Math.PI*2); g2.fill(); });
+    g2.restore();
+    r._s={pa,pb,W,ux,uy,nx,ny,Ls};                    // screen geometry for hit-testing (preview only)
+  });
+}
+function drawInk(g, m, k){
+  const sc=Math.hypot(m.a,m.b);
+  const strokes = S.inkDraft ? S.ink.concat([S.inkDraft]) : S.ink;
+  strokes.forEach(st=>{
+    const P=st.pts.map(p=>m.transformPoint(new DOMPoint(p.x,p.y))); if(!P.length) return;
+    g.save(); g.lineCap="round"; g.lineJoin="round"; g.strokeStyle=st.color; g.fillStyle=st.color;
+    g.lineWidth=Math.max(1, st.w*sc);
+    g.shadowColor = st.color==="#111111" ? "rgba(255,255,255,.35)" : "rgba(0,0,0,.45)"; g.shadowBlur=2*k;
+    g.beginPath();
+    if (st.shape==="pen"){ g.moveTo(P[0].x,P[0].y); for(let i=1;i<P.length;i++){ const a=P[i-1], b=P[i]; g.quadraticCurveTo(a.x,a.y,(a.x+b.x)/2,(a.y+b.y)/2); } if(P.length===1) g.lineTo(P[0].x+0.1,P[0].y); g.stroke(); }
+    else if (st.shape==="arrow" && P.length>1){
+      const a=P[0], b=P[P.length-1], ang=Math.atan2(b.y-a.y,b.x-a.x), hl=Math.max(10*k, g.lineWidth*3.5);
+      g.moveTo(a.x,a.y); g.lineTo(b.x-Math.cos(ang)*hl*0.6,b.y-Math.sin(ang)*hl*0.6); g.stroke();
+      g.beginPath(); g.moveTo(b.x,b.y); g.lineTo(b.x-Math.cos(ang-0.45)*hl,b.y-Math.sin(ang-0.45)*hl); g.lineTo(b.x-Math.cos(ang+0.45)*hl,b.y-Math.sin(ang+0.45)*hl); g.closePath(); g.fill();
+    }
+    else if (st.shape==="circle" && P.length>1){
+      const a=P[0], b=P[P.length-1];
+      g.ellipse((a.x+b.x)/2,(a.y+b.y)/2,Math.abs(b.x-a.x)/2,Math.abs(b.y-a.y)/2,0,0,Math.PI*2); g.stroke();
+    }
+    g.restore();
+  });
+}
 function drawScalebar(g, s, sc, w, h, k){
   const ppm=pxPerMm(s); if(!ppm || !S.scalebar) return;
-  const steps=[0.005,0.01,0.02,0.05,0.1,0.2,0.25,0.5,1,2,5,10,20,50];
-  let L=steps[0]; for(const v of steps){ if(v*ppm*sc <= 170*k) L=v; }
+  const maxMm = 170*k/(ppm*sc), key=unitFor(maxMm), f=UNITS[key].f;
+  const L = niceDown(maxMm*f)/f;            // bar length in mm, a round number in the chosen unit
   const bw=L*ppm*sc, x=20*k, y=h-28*k;
   g.save();
   g.fillStyle="rgba(10,11,13,.7)"; g.fillRect(x-8*k,y-26*k,bw+16*k,40*k);
   g.fillStyle="#fff"; g.fillRect(x,y,bw,4*k); g.fillRect(x,y-4*k,2*k,12*k); g.fillRect(x+bw-2*k,y-4*k,2*k,12*k);
   g.font=`500 ${12*k}px "IBM Plex Mono", Menlo, monospace`; g.textAlign="left"; g.textBaseline="alphabetic";
-  g.fillText(L<1 ? Math.round(L*1000)+" µm" : L+" mm", x, y-8*k);
+  g.fillText(`${+(L*f).toPrecision(3)} ${UNITS[key].label}`, x, y-8*k);
   g.restore();
 }
 function render(){
@@ -465,9 +628,13 @@ function render(){
   ctx.imageSmoothingEnabled = S.zoom*fitScale(s) < 3;
   try{ ctx.drawImage(s.el,0,0); }catch(e){}
   ctx.filter="none"; ctx.setTransform(1,0,0,1,0,0);
+  drawOverlay(ctx, m, stage.width, stage.height, k, "under");
   drawGuides(ctx, stage.width, stage.height, k);
+  drawInk(ctx, m, k);
+  drawRulers(ctx, m, s, k);
   drawMarks(ctx, m, s, k);
   drawScalebar(ctx, s, sc, stage.width, stage.height, k);
+  drawOverlay(ctx, m, stage.width, stage.height, k, "corner");
 }
 function loop(){ render(); hudTick(); requestAnimationFrame(loop); }
 
@@ -503,17 +670,42 @@ stage.addEventListener("pointerdown", e=>{
   if (e.button!==0) return;
   stage.setPointerCapture(e.pointerId);
   const p=canvasPt(e);
-  if (S.tool==="pan"){ drag={x:p.x,y:p.y,px:S.pan.x,py:S.pan.y}; stage.classList.add("dragging"); }
-  else { const ip=toImage(p); S.draft={a:ip,b:{...ip}}; }
+  const ip=toImage(p);
+  if (S.tool==="pan"){
+    const h=hitRuler(p);
+    if (h){ rdrag={r:h.r, part:h.part, start:ip, a:{...h.r.a}, b:{...h.r.b}}; return; }
+    drag={x:p.x,y:p.y,px:S.pan.x,py:S.pan.y}; stage.classList.add("dragging");
+  }
+  else if (S.tool==="overlay" && OV.img){
+    if (OV.mode==="specimen"){ if (OV.x==null) fitOverlay(); ovDrag={start:ip, x:OV.x, y:OV.y}; }
+    else ovDrag={screen:true, sx:p.x, sy:p.y, x:OV.sx||0, y:OV.sy||0};
+  }
+  else if (S.tool==="draw"){
+    const sc=viewMatrix(src()).sc;
+    S.inkDraft={shape:S.pen.shape, color:S.pen.color, w:S.pen.w*S.dpr/sc, pts: S.pen.shape==="pen"?[ip]:[ip,{...ip}]};
+  }
+  else { S.draft={a:ip,b:{...ip}}; }
 });
 stage.addEventListener("pointermove", e=>{
   const p=canvasPt(e), ip=toImage(p), s=src();
   const ppm=pxPerMm(s);
-  $("#hudCursor").textContent = ppm ? `x ${(ip.x/ppm).toFixed(3)}  y ${(ip.y/ppm).toFixed(3)} mm` : `x ${Math.round(ip.x)}  y ${Math.round(ip.y)} px`;
+  if (ppm){ const key=S.unit==="auto"?"mm":S.unit, f=UNITS[key].f;
+    $("#hudCursor").textContent = `x ${fmtNum(ip.x/ppm*f)}  y ${fmtNum(ip.y/ppm*f)} ${UNITS[key].label}`; }
+  else $("#hudCursor").textContent = `x ${Math.round(ip.x)}  y ${Math.round(ip.y)} px`;
+  if (rdrag){ moveRuler(p, ip); return; }
+  if (ovDrag){ if (!ovDrag.screen){ OV.x=ovDrag.x+(ip.x-ovDrag.start.x); OV.y=ovDrag.y+(ip.y-ovDrag.start.y); }
+    else { OV.sx=ovDrag.x+(p.x-ovDrag.sx)/stage.width; OV.sy=ovDrag.y+(p.y-ovDrag.sy)/stage.height; } return; }
+  if (S.inkDraft){ const st=S.inkDraft; if (st.shape==="pen") { const l=st.pts[st.pts.length-1]; if (Math.hypot(ip.x-l.x,ip.y-l.y)*viewMatrix(s).sc > 1.5*S.dpr) st.pts.push(ip); } else st.pts[1]=ip; return; }
+  if (S.tool==="pan" && !drag) stage.style.cursor = hitRuler(p) ? (hitRuler(p).part==="body"?"move":"grab") : "";
   if (drag){ S.pan.x=drag.px+(p.x-drag.x); S.pan.y=drag.py+(p.y-drag.y); }
   else if (S.draft){ S.draft.b=ip; }
 });
 const endPointer = ()=>{
+  if (rdrag){ rdrag=null; return; }
+  if (ovDrag){ ovDrag=null; saveOv(); return; }
+  if (S.inkDraft){ const st=S.inkDraft; S.inkDraft=null;
+    if (st.shape==="pen" || Math.hypot(st.pts[1].x-st.pts[0].x, st.pts[1].y-st.pts[0].y)>2) S.ink.push(st);
+    return; }
   if (drag){ drag=null; stage.classList.remove("dragging"); return; }
   if (!S.draft) return;
   const d=S.draft; S.draft=null;
@@ -523,9 +715,161 @@ const endPointer = ()=>{
   else if (S.tool==="calibrate"){ openCal(px); }
 };
 stage.addEventListener("pointerup", endPointer);
-stage.addEventListener("pointercancel", ()=>{ drag=null; S.draft=null; stage.classList.remove("dragging"); });
+stage.addEventListener("pointercancel", ()=>{ drag=null; rdrag=null; S.inkDraft=null; S.draft=null; stage.classList.remove("dragging"); });
+
+/* ---------- Image overlay ---------- */
+const OV = Object.assign({show:true, op:50, blend:"source-over", mode:"specimen", corner:"br", csize:18, x:null, y:null, scale:1, rot:0, flip:false, name:""},
+  store.get("ov", {}));
+OV.img=null;
+function saveOv(){ const {img, ...rest}=OV; store.set("ov", rest); }
+function drawOverlay(g, m, W, H, k, pass){
+  const im=OV.img; if (!im || !OV.show) return;
+  const iw=im.naturalWidth||im.width, ih=im.naturalHeight||im.height; if(!iw) return;
+  const isCorner = OV.mode==="corner";
+  if ((pass==="corner") !== isCorner) return;
+  g.save(); g.globalAlpha=OV.op/100; g.globalCompositeOperation=OV.blend;
+  if (OV.mode==="specimen"){
+    if (OV.x==null) fitOverlay();
+    g.setTransform(m); g.translate(OV.x,OV.y); g.rotate(OV.rot*Math.PI/180); g.scale(OV.scale*(OV.flip?-1:1), OV.scale);
+    g.drawImage(im,-iw/2,-ih/2);
+  } else if (OV.mode==="screen"){
+    const sc=Math.min(W/iw,H/ih); g.setTransform(1,0,0,1,0,0);
+    g.translate(W/2+(OV.sx||0)*W, H/2+(OV.sy||0)*H); g.rotate(OV.rot*Math.PI/180); g.scale(sc*OV.scale*(OV.flip?-1:1), sc*OV.scale);
+    g.drawImage(im,-iw/2,-ih/2);
+  } else {
+    g.setTransform(1,0,0,1,0,0); g.globalCompositeOperation="source-over";
+    const lw=W*OV.csize/100, lh=lw*ih/iw, mg=Math.min(W,H)*0.03;
+    const x=OV.corner.includes("r")?W-lw-mg:mg, y=OV.corner.includes("b")?H-lh-mg-(OV.corner==="bl"&&S.scalebar&&pxPerMm(src())?46*k:0):mg+(OV.corner==="tl"?34*k:0);
+    g.drawImage(im,x,y,lw,lh);
+  }
+  g.restore();
+}
+// Centre the overlay on the current view, sized to fill it.
+function fitOverlay(){
+  const im=OV.img; if(!im) return;
+  const iw=im.naturalWidth||im.width, ih=im.naturalHeight||im.height;
+  const c=toImage({x:stage.width/2,y:stage.height/2}), e=toImage({x:stage.width,y:stage.height/2}), t=toImage({x:stage.width/2,y:stage.height});
+  const vw=2*Math.hypot(e.x-c.x,e.y-c.y), vh=2*Math.hypot(t.x-c.x,t.y-c.y);
+  OV.x=c.x; OV.y=c.y; OV.scale = OV.mode==="screen" ? 1 : Math.min(vw/iw, vh/ih); OV.rot=0; syncOv(); saveOv();
+}
+function setOverlay(im, name, keepPlacement){
+  OV.img=im; OV.name=name; OV.show=true;
+  if (!keepPlacement){ OV.x=null; }
+  $("#ovTool").hidden=false; syncOv(); saveOv();
+  // remember it for next time (shrunk so it fits in saved settings)
+  try{ const iw=im.naturalWidth||im.width, ih=im.naturalHeight||im.height, k=Math.min(1,1600/Math.max(iw,ih));
+    const c=document.createElement("canvas"); c.width=Math.round(iw*k); c.height=Math.round(ih*k); c.getContext("2d").drawImage(im,0,0,c.width,c.height);
+    let url=c.toDataURL("image/png"); if (url.length>2.5e6) url=c.toDataURL("image/jpeg",0.85);
+    localStorage.setItem("loupe:ovImg", url); localStorage.setItem("loupe:ovImgK", String(k));
+    OV.storedK=k;
+  }catch(e){ try{ localStorage.removeItem("loupe:ovImg"); }catch(e2){} }
+}
+function syncOv(){
+  const has=!!OV.img;
+  $("#ovCtl").hidden=!has; $("#ovRemove").hidden=!has; $("#ovTool").hidden=!has;
+  $("#ovHint").hidden=has;
+  if (!has){ if (S.tool==="overlay") setTool("pan"); return; }
+  $("#ovThumb").src = OV.img.src || OV.img.toDataURL("image/jpeg",0.6);
+  $("#ovName").textContent=OV.name||"overlay"; $("#ovName").title=OV.name||"";
+  document.querySelectorAll("#ovMode button").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.v===OV.mode)));
+  $("#ovShow").checked=OV.show; $("#ovOp").value=OV.op; $("#ovOpV").textContent=OV.op+"%";
+  $("#ovBlend").value=OV.blend; $("#ovBlend").disabled = OV.mode==="corner";
+  $("#ovSpec").hidden = OV.mode==="corner"; $("#ovCorner").hidden = OV.mode!=="corner";
+  $("#ovSize").value=Math.round(Math.min(400,Math.max(5, sizePct()))); $("#ovSizeV").textContent=Math.round(sizePct())+"%";
+  $("#ovRot").value=Math.round(OV.rot); $("#ovRotV").textContent=Math.round(OV.rot)+"°";
+  $("#ovFlip").classList.toggle("on",OV.flip);
+  $("#ovCornerSel").value=OV.corner; $("#ovCSize").value=OV.csize; $("#ovCSizeV").textContent=OV.csize+"%";
+  $("#ovTool").hidden = OV.mode==="corner";
+}
+// Size slider = overlay width as % of the visible view width.
+function viewWidthImg(){ const a=toImage({x:0,y:stage.height/2}), b=toImage({x:stage.width,y:stage.height/2}); return Math.hypot(b.x-a.x,b.y-a.y)||1; }
+function sizePct(){ const im=OV.img; if(!im) return 100; const iw=im.naturalWidth||im.width;
+  return OV.mode==="screen" ? OV.scale*100 : iw*OV.scale/viewWidthImg()*100; }
+function setSizePct(p){ const im=OV.img; if(!im) return; const iw=im.naturalWidth||im.width;
+  OV.scale = OV.mode==="screen" ? p/100 : (p/100)*viewWidthImg()/iw; }
+$("#ovLoad").addEventListener("click",()=>$("#ovFile").click());
+$("#ovFile").addEventListener("change",e=>{
+  const f=e.target.files[0]; e.target.value=""; if(!f) return;
+  const url=URL.createObjectURL(f), im=new Image();
+  im.onload=()=>setOverlay(im, f.name); im.onerror=()=>{ $("#ovHint").hidden=false; $("#ovHint").textContent="That file couldn't be opened as an image. Try a PNG or JPEG."; };
+  im.src=url;
+});
+$("#ovFrame").addEventListener("click",()=>{
+  const s=src(), c=document.createElement("canvas"); c.width=s.w; c.height=s.h; c.getContext("2d").drawImage(s.el,0,0);
+  const im=new Image(); im.onload=()=>{ setOverlay(im, "View at "+new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"}));
+    OV.mode="specimen"; OV.x=s.w/2; OV.y=s.h/2; OV.scale=1; OV.rot=0; OV.flip=false; if (OV.op>60) OV.op=40; syncOv(); saveOv(); };
+  im.src=c.toDataURL("image/jpeg",0.92);
+});
+$("#ovRemove").addEventListener("click",()=>{ OV.img=null; OV.name=""; try{ localStorage.removeItem("loupe:ovImg"); }catch(e){} saveOv(); syncOv(); });
+document.querySelectorAll("#ovMode button").forEach(b=>b.addEventListener("click",()=>{
+  const was=OV.mode; OV.mode=b.dataset.v; if (was!==OV.mode && OV.mode!=="corner"){ OV.rot=0; if (OV.mode==="screen"){ OV.scale=1; OV.sx=0; OV.sy=0; } else fitOverlay(); }
+  syncOv(); saveOv(); }));
+$("#ovShow").addEventListener("change",e=>{ OV.show=e.target.checked; saveOv(); });
+$("#ovOp").addEventListener("input",e=>{ OV.op=+e.target.value; $("#ovOpV").textContent=OV.op+"%"; saveOv(); });
+$("#ovBlend").addEventListener("change",e=>{ OV.blend=e.target.value; saveOv(); });
+$("#ovSize").addEventListener("input",e=>{ setSizePct(+e.target.value); $("#ovSizeV").textContent=e.target.value+"%"; saveOv(); });
+$("#ovRot").addEventListener("input",e=>{ OV.rot=+e.target.value; $("#ovRotV").textContent=e.target.value+"°"; saveOv(); });
+$("#ovFit").addEventListener("click",()=>{ if (OV.mode==="screen"){ OV.scale=1; OV.rot=0; OV.sx=0; OV.sy=0; syncOv(); saveOv(); } else fitOverlay(); });
+$("#ovFlip").addEventListener("click",()=>{ OV.flip=!OV.flip; syncOv(); saveOv(); });
+$("#ovCornerSel").addEventListener("change",e=>{ OV.corner=e.target.value; saveOv(); });
+$("#ovCSize").addEventListener("input",e=>{ OV.csize=+e.target.value; $("#ovCSizeV").textContent=OV.csize+"%"; saveOv(); });
+// Restore last overlay
+(function(){ let url=null; try{ url=localStorage.getItem("loupe:ovImg"); }catch(e){}
+  if (!url) { syncOv(); return; }
+  const im=new Image();
+  im.onload=()=>{ OV.img=im;
+    // The saved copy may be smaller than the original; keep the same on-screen size.
+    let sk=1; try{ sk=parseFloat(localStorage.getItem("loupe:ovImgK"))||1; localStorage.setItem("loupe:ovImgK","1"); }catch(e){}
+    if (OV.mode==="specimen" && sk!==1) { OV.scale/=sk; saveOv(); }
+    syncOv(); };
+  im.src=url; })();
+let ovDrag=null;
+
+/* ---------- Rulers: add, hit-test, drag ---------- */
+let rdrag=null;
+function hitRuler(p){
+  for (let i=S.rulers.length-1;i>=0;i--){
+    const r=S.rulers[i], g=r._s; if(!g) continue;
+    const dx=p.x-g.pa.x, dy=p.y-g.pa.y, along=dx*g.ux+dy*g.uy, across=dx*g.nx+dy*g.ny;
+    const grip=12*S.dpr;
+    if (Math.hypot(p.x-g.pa.x-g.nx*(-g.W/2), p.y-g.pa.y-g.ny*(-g.W/2))<grip || (along>-grip && along<grip && across<4*S.dpr && across>-g.W-4*S.dpr)) return {r, part:"a"};
+    if (Math.hypot(p.x-g.pb.x-g.nx*(-g.W/2), p.y-g.pb.y-g.ny*(-g.W/2))<grip || (along>g.Ls-grip && along<g.Ls+grip && across<4*S.dpr && across>-g.W-4*S.dpr)) return {r, part:"b"};
+    if (along>=0 && along<=g.Ls && across<=4*S.dpr && across>=-g.W-4*S.dpr) return {r, part:"body"};
+  }
+  return null;
+}
+function moveRuler(p, ip){
+  const d=rdrag, r=d.r;
+  if (d.part==="body"){ const dx=ip.x-d.start.x, dy=ip.y-d.start.y; r.a={x:d.a.x+dx,y:d.a.y+dy}; r.b={x:d.b.x+dx,y:d.b.y+dy}; }
+  else { r[d.part]=ip; }
+}
+function addRuler(){
+  const w=stage.width, h=stage.height;
+  const a=toImage({x:w*0.2,y:h*0.62}), b=toImage({x:w*0.8,y:h*0.62});
+  S.rulers.push({id:S.nextId++, a, b}); setTool("pan");
+}
+$("#rAdd").addEventListener("click", addRuler);
+$("#rClear").addEventListener("click", ()=>{ S.rulers=[]; });
+
+/* ---------- Drawing controls ---------- */
+function syncPen(){
+  document.querySelectorAll("#inkShape button").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.v===S.pen.shape)));
+  document.querySelectorAll("#inkColor button").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.v===S.pen.color)));
+  $("#inkW").value=S.pen.w; $("#inkWv").textContent=S.pen.w;
+}
+document.querySelectorAll("#inkShape button").forEach(b=>b.addEventListener("click",()=>{ S.pen.shape=b.dataset.v; store.set("pen",S.pen); syncPen(); setTool("draw"); }));
+document.querySelectorAll("#inkColor button").forEach(b=>b.addEventListener("click",()=>{ S.pen.color=b.dataset.v; store.set("pen",S.pen); syncPen(); setTool("draw"); }));
+$("#inkW").addEventListener("input",e=>{ S.pen.w=+e.target.value; $("#inkWv").textContent=e.target.value; store.set("pen",S.pen); });
+$("#inkUndo").addEventListener("click",()=>{ S.ink.pop(); });
+$("#inkClear").addEventListener("click",()=>{ S.ink=[]; });
+syncPen();
 stage.addEventListener("wheel", e=>{
   e.preventDefault();
+  if (S.tool==="overlay" && OV.img && OV.mode!=="corner"){
+    if (e.shiftKey) OV.rot=((OV.rot + (e.deltaY||e.deltaX)*0.15 + 540)%360)-180;
+    else OV.scale*=Math.exp(-e.deltaY*0.0015);
+    syncOv(); saveOv(); return;
+  }
   const f=Math.exp(-e.deltaY*0.0018); zoomAt(S.zoom*f, canvasPt(e));
 },{passive:false});
 stage.addEventListener("dblclick", ()=>{ if(S.tool==="pan") resetView(); });
@@ -546,7 +890,7 @@ function resetView(){ S.zoom=1; S.pan={x:0,y:0}; syncZoomUI(); }
 function setTool(t){
   S.tool=t; S.draft=null;
   document.querySelectorAll(".tools [data-tool]").forEach(b=>b.setAttribute("aria-pressed", String(b.dataset.tool===t)));
-  stage.className="t-"+t;
+  stage.className="t-"+t; stage.style.cursor="";
 }
 document.querySelectorAll(".tools [data-tool]").forEach(b=>b.addEventListener("click",()=>setTool(b.dataset.tool)));
 const wrap=$("#stageWrap");
@@ -580,13 +924,15 @@ function openCal(px){
   pendingCalPx=px;
   $("#calMsg").textContent=`Your line is ${Math.round(px)} px long. Enter the real distance it spans.`;
   $("#calName").value = S.cal.active || "";
+  $("#calUnit").value = store.get("calUnit", S.unit==="auto"?"mm":S.unit);
   $("#calDialog").hidden=false; setTimeout(()=>$("#calLen").select(),0);
 }
 $("#calCancel").addEventListener("click", ()=>{ $("#calDialog").hidden=true; });
 $("#calForm").addEventListener("submit", e=>{
   e.preventDefault();
-  const len=parseFloat($("#calLen").value), name=$("#calName").value.trim();
-  if (!(len>0) || !name) return;
+  const raw=parseFloat($("#calLen").value), name=$("#calName").value.trim(), cu=$("#calUnit").value;
+  if (!(raw>0) || !name) return;
+  const len = raw/UNITS[cu].f; store.set("calUnit",cu);   // convert to mm
   S.cal.profiles[name]={pxPerMm:pendingCalPx/len, refWidth:src().w};
   S.cal.active=name; store.set("cal",S.cal);
   $("#calDialog").hidden=true; renderProfiles(); renderMeasures(); setTool("measure");
@@ -597,9 +943,11 @@ function renderProfiles(){
   Object.keys(S.cal.profiles).forEach(n=>sel.add(new Option(n,n)));
   sel.value=S.cal.active||"";
   const p=activeProfile(), s=src();
-  $("#scaleReadout").textContent = p ? `${pxPerMm(s).toFixed(1)} px per mm at ${s.w} px wide` : "Uncalibrated · measuring in pixels";
+  $("#scaleReadout").textContent = p ? `${pxPerMm(s).toFixed(1)} px per mm at ${s.w} px wide · field of view ${fmtMm(s.w/pxPerMm(s))} wide` : "Uncalibrated · measuring in pixels";
   $("#profDel").disabled=!p;
 }
+$("#unitSel").value=S.unit;
+$("#unitSel").addEventListener("change", e=>{ S.unit=e.target.value; store.set("unit",S.unit); renderProfiles(); renderMeasures(); });
 $("#profSel").addEventListener("change", e=>{ S.cal.active=e.target.value; store.set("cal",S.cal); renderProfiles(); renderMeasures(); });
 $("#profDel").addEventListener("click", ()=>{ delete S.cal.profiles[S.cal.active]; S.cal.active=""; store.set("cal",S.cal); renderProfiles(); renderMeasures(); });
 
@@ -666,7 +1014,11 @@ function snap(){
   const m=new DOMMatrix().translate(rw/2,rh/2).rotate(S.rot).scale(S.flipH?-1:1, S.flipV?-1:1).translate(-s.w/2,-s.h/2);
   g.setTransform(m); if (FILTER_OK) g.filter=filterStr();
   g.drawImage(s.el,0,0); g.filter="none"; g.setTransform(1,0,0,1,0,0);
-  if (S.burn){ const k=Math.max(1, rw/1300); drawMarks(g,m,s,k); drawScalebar(g,s,1,rw,rh,k); }
+  drawOverlay(g, m, rw, rh, Math.max(1, rw/1300), "under");
+  if (S.burn){ const k=Math.max(1, rw/1300); const keep=S.rulers.map(r=>r._s);
+    drawInk(g,m,k); drawRulers(g,m,s,k); drawMarks(g,m,s,k); drawScalebar(g,s,1,rw,rh,k);
+    S.rulers.forEach((r,i)=>r._s=keep[i]); }
+  drawOverlay(g, m, rw, rh, Math.max(1, rw/1300), "corner");
   const f=$("#flash"); f.classList.add("on"); requestAnimationFrame(()=>requestAnimationFrame(()=>f.classList.remove("on")));
   c.toBlob(b=>{ if(b) addItem({kind:"image", blob:b, name:`scope_${stamp()}.png`, w:rw, h:rh}); }, "image/png");
 }
@@ -969,10 +1321,10 @@ function renderDiag(){
   let html="";
   if (ENV.framed){
     html=`<strong>This preview can't use the camera or save settings.</strong>
-      <ol><li>Download <b>loupe-bench.html</b> to your Mac.</li><li>In Finder, right-click it → <b>Open With → Google Chrome</b>.</li></ol>`;
+      <ol><li>Download <b>jewelers-loupe.html</b> to your Mac.</li><li>In Finder, right-click it → <b>Open With → Google Chrome</b>.</li></ol>`;
   } else if (ENV.browser==="Safari" || ENV.browser==="Firefox" || !ENV.media){
     html=`<strong>${ENV.browser} won't give a file opened from your Mac access to the camera${store.ok?"":", and it won't save settings"}.</strong>
-      <ol><li>Close this tab.</li><li>In Finder, right-click <b>loupe-bench.html</b> → <b>Open With → Google Chrome</b>.</li>
+      <ol><li>Close this tab.</li><li>In Finder, right-click <b>jewelers-loupe.html</b> → <b>Open With → Google Chrome</b>.</li>
       <li>Optional: <b>Get Info</b> on the file → Open with: Chrome → <b>Change All…</b> so double-clicking always uses Chrome.</li></ol>`;
   } else if (!store.ok){
     html=`<strong>Chrome is blocking saved settings.</strong> Check Chrome Settings → Privacy and security → Third-party cookies and site data, and make sure "Block all" isn't on. Incognito windows never keep settings.`;
@@ -1015,6 +1367,9 @@ document.addEventListener("keydown", e=>{
   else if (k==="m") setTool("measure");
   else if (k==="c") setTool("calibrate");
   else if (k==="v") setTool("pan");
+  else if (k==="d") setTool("draw");
+  else if (k==="z") S.ink.pop();
+  else if (k==="o" && OV.img){ OV.show=!OV.show; $("#ovShow").checked=OV.show; saveOv(); }
   else if (k==="0") resetView();
   else if (k==="=" || k==="+") zoomAt(S.zoom*1.25);
   else if (k==="-") zoomAt(S.zoom/1.25);
