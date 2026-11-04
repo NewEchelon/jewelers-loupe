@@ -1,0 +1,945 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Loupe Bench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: full-height bench — live stage fills the left, an instrument panel of controls on the right; stacks on narrow screens. */
+:root{
+  --bg:#121417; --surface:#1a1d21; --raise:#22262b; --line:#2e333a;
+  --fg:#e7e4dc; --muted:#8d9198; --brass:#cfa75e; --brass-ink:#1b1608;
+  --cyan:#6fd3e0; --rec:#e5564b; --ok:#7cc48a;
+  --ui:"Instrument Sans",-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 var(--ui);display:grid;grid-template-rows:auto 1fr;overflow:hidden}
+button,select,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+
+/* Header */
+.bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--surface)}
+.brand{display:flex;align-items:baseline;gap:8px;margin-right:auto}
+.brand b{font-weight:600;font-size:16px;letter-spacing:.01em}
+.brand span{font:12px var(--mono);color:var(--muted)}
+.field{display:flex;align-items:center;gap:6px}
+.field label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+select,input[type=number],input[type=text]{background:var(--raise);border:1px solid var(--line);border-radius:6px;padding:6px 8px;min-width:0}
+select{max-width:240px}
+.chip{font:12px var(--mono);padding:4px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.chip.live{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent)}
+.chip.err{color:var(--rec);border-color:color-mix(in srgb,var(--rec) 40%,transparent)}
+
+/* Main */
+.layout{display:grid;grid-template-columns:1fr 330px;min-height:0}
+.stage-wrap{position:relative;min-width:0;min-height:0;background:#0b0c0e;overflow:hidden}
+#stage{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
+#stage.t-pan{cursor:grab} #stage.t-pan.dragging{cursor:grabbing}
+#stage.t-measure,#stage.t-calibrate{cursor:crosshair}
+.flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .35s}
+.flash.on{opacity:.55;transition:none}
+
+.hud{position:absolute;pointer-events:none;display:flex;gap:6px;flex-wrap:wrap}
+.hud.tl{top:12px;left:12px}
+.hud.br{bottom:12px;right:12px;flex-direction:column;align-items:flex-end}
+.tag{font:12px var(--mono);background:rgba(10,11,13,.72);border:1px solid rgba(255,255,255,.08);padding:4px 8px;border-radius:5px;backdrop-filter:blur(4px)}
+.tag.rec{color:#fff;background:var(--rec);border-color:var(--rec)}
+.tag.frozen{color:var(--cyan)}
+.tag.sample{color:var(--brass)}
+
+.tools{position:absolute;top:12px;right:12px;display:flex;gap:4px;background:rgba(10,11,13,.75);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:4px;backdrop-filter:blur(4px)}
+.tools button{border:0;background:transparent;padding:6px 10px;border-radius:5px;cursor:pointer;font-size:13px;color:var(--muted)}
+.tools button:hover{color:var(--fg)}
+.tools button[aria-pressed=true]{background:var(--raise);color:var(--fg)}
+.tools kbd{font:11px var(--mono);opacity:.6;margin-left:4px}
+
+.stage-wrap .tools,.stage-wrap .hud{transition:opacity .3s}
+.stage-wrap.clean .tools,.stage-wrap.clean .hud{opacity:0;pointer-events:none}
+.stage-wrap.clean:hover .tools{opacity:1;pointer-events:auto}
+.stage-wrap.fs.idle .tools,.stage-wrap.fs.idle .hud{opacity:0;pointer-events:none}
+.stage-wrap.fs.idle,.stage-wrap.fs.idle #stage{cursor:none}
+.stage-wrap.fs.clean.idle .tools{opacity:0}
+.stage-wrap.is-frozen .hud.tl{opacity:1!important}
+.stage-wrap.is-frozen{box-shadow:inset 0 0 0 3px var(--cyan)}
+.empty{position:absolute;left:50%;bottom:56px;transform:translateX(-50%);display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:center;background:rgba(10,11,13,.85);border:1px solid var(--line);border-radius:10px;padding:12px 14px;max-width:calc(100% - 32px)}
+.empty p{margin:0;color:var(--muted);font-size:13px;max-width:44ch}
+
+/* Dialog */
+.dialog{position:absolute;inset:0;display:grid;place-items:center;background:rgba(5,6,8,.55)}
+.dialog form{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;width:min(340px,calc(100% - 32px));display:grid;gap:12px}
+.dialog h3{margin:0;font-size:15px}
+.dialog p{margin:0;color:var(--muted);font-size:13px}
+.dialog .row{display:grid;gap:4px}
+.dialog .row label{font-size:12px;color:var(--muted)}
+.dialog .actions{display:flex;justify-content:flex-end;gap:8px}
+
+/* Panel */
+.panel{border-left:1px solid var(--line);background:var(--surface);overflow-y:auto;min-height:0}
+.sec{padding:14px 16px;border-bottom:1px solid var(--line);display:grid;gap:10px}
+.sec h2{margin:0;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);display:flex;justify-content:space-between;align-items:center}
+.sec h2 button{text-transform:none;letter-spacing:0}
+.btn{border:1px solid var(--line);background:var(--raise);border-radius:7px;padding:7px 12px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}
+.btn:hover{border-color:#454b54}
+.btn.primary{background:var(--brass);color:var(--brass-ink);border-color:var(--brass);font-weight:600}
+.btn.primary:hover{filter:brightness(1.07)}
+.btn.rec-on{background:var(--rec);border-color:var(--rec);color:#fff}
+.btn.on{border-color:var(--cyan);color:var(--cyan)}
+.btn.small{padding:3px 8px;font-size:12px;border-radius:5px}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--muted)}
+.btn.ghost:hover{color:var(--fg)}
+.btn kbd{font:11px var(--mono);opacity:.65}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+.check{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);cursor:pointer}
+.check input{accent-color:var(--brass)}
+.slider{display:grid;grid-template-columns:86px 1fr 44px;align-items:center;gap:8px;font-size:13px}
+.slider span:last-child{font:12px var(--mono);color:var(--muted);text-align:right}
+input[type=range]{width:100%;accent-color:var(--brass)}
+.hint{margin:0;font-size:12.5px;color:var(--muted)}
+.readout{font:12.5px var(--mono);color:var(--fg)}
+.inline{display:flex;gap:6px;align-items:center}
+.inline select{flex:1}
+
+.mlist{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.mlist li{display:flex;align-items:center;gap:8px;font:13px var(--mono);padding:4px 6px;border-radius:5px;background:var(--raise)}
+.mlist li i{font-style:normal;color:var(--brass);width:22px}
+.mlist li b{font-weight:500;flex:1;font-variant-numeric:tabular-nums}
+
+.gallery{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.gitem{background:var(--raise);border:1px solid var(--line);border-radius:8px;overflow:hidden;display:grid}
+.gitem img,.gitem video{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:#000}
+.gitem .meta{padding:6px;display:flex;justify-content:space-between;align-items:center;gap:4px}
+.gitem .meta span{font:11px var(--mono);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gitem a{color:var(--brass);font-size:12px;text-decoration:none}
+.gitem a:hover{text-decoration:underline}
+
+.diag{list-style:none;margin:0;padding:0;display:grid;gap:5px}
+.diag li{display:grid;grid-template-columns:14px 1fr auto;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)}
+.diag li b{font:500 12px var(--mono);color:var(--fg);text-align:right}
+.diag .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.diag .good .dot{background:var(--ok)} .diag .bad .dot{background:var(--rec)} .diag .bad b{color:var(--rec)}
+.alert{border:1px solid color-mix(in srgb,var(--rec) 45%,transparent);background:color-mix(in srgb,var(--rec) 10%,transparent);border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.5;display:grid;gap:6px}
+.alert strong{color:#f3b2ac}
+.alert ol{margin:0;padding-left:18px}
+@media (max-width:860px){
+  body{overflow:auto;display:block}
+  .layout{grid-template-columns:1fr}
+  .stage-wrap{height:62vh}
+  .panel{border-left:0;overflow:visible}
+  .tools kbd{display:none}
+}
+@media (prefers-reduced-motion:reduce){.flash{transition:none}}
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand"><b>Loupe Bench</b><span>microscope viewer</span></div>
+  <div class="field">
+    <label for="camSel">Camera</label>
+    <select id="camSel"><option value="">Not connected</option></select>
+    <button class="btn small" id="refreshBtn" title="Look for cameras again">Refresh</button>
+  </div>
+  <div class="field">
+    <label for="resSel">Resolution</label>
+    <select id="resSel">
+      <option value="3840x2160">4K · 3840×2160</option>
+      <option value="2592x1944">5 MP · 2592×1944</option>
+      <option value="1920x1080" selected>1080p · 1920×1080</option>
+      <option value="1280x720">720p · 1280×720</option>
+      <option value="640x480">VGA · 640×480</option>
+    </select>
+  </div>
+  <span class="chip" id="statusChip">No camera</span>
+</header>
+
+<main class="layout">
+  <section class="stage-wrap" id="stageWrap">
+    <canvas id="stage" class="t-pan" aria-label="Microscope view"></canvas>
+    <div class="flash" id="flash"></div>
+
+    <div class="hud tl" id="hudTL"></div>
+    <div class="hud br">
+      <span class="tag" id="hudCursor">—</span>
+      <span class="tag" id="hudInfo">—</span>
+    </div>
+
+    <div class="tools" role="toolbar" aria-label="Tools">
+      <button data-tool="pan" aria-pressed="true">Pan<kbd>V</kbd></button>
+      <button data-tool="measure" aria-pressed="false">Measure<kbd>M</kbd></button>
+      <button data-tool="calibrate" aria-pressed="false">Calibrate<kbd>C</kbd></button>
+      <button id="fsBtn" title="Full screen (Shift+F)">⛶ Full screen</button>
+    </div>
+
+    <div class="empty" id="emptyCard">
+      <p>Showing a sample ruler so you can try the tools. Plug in the microscope, then connect.</p>
+      <button class="btn primary" id="connectBtn">Connect camera</button>
+    </div>
+
+    <div class="dialog" id="calDialog" hidden>
+      <form id="calForm">
+        <h3>Set the scale</h3>
+        <p id="calMsg">Your line is 0 px long. Enter the real distance it spans.</p>
+        <div class="row">
+          <label for="calLen">Real length (mm)</label>
+          <input type="number" id="calLen" step="any" min="0.001" value="1" required>
+        </div>
+        <div class="row">
+          <label for="calName">Name this magnification</label>
+          <input type="text" id="calName" placeholder="e.g. 20× zoom" required>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn ghost" id="calCancel">Cancel</button>
+          <button type="submit" class="btn primary">Save scale</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <div class="sec" id="diagSec">
+      <h2>Connection check</h2>
+      <div class="alert" id="diagAlert" hidden></div>
+      <ul class="diag" id="diagList"></ul>
+    </div>
+    <div class="sec">
+      <h2>Capture</h2>
+      <div class="grid3">
+        <button class="btn primary" id="snapBtn" title="Space">Photo <kbd>␣</kbd></button>
+        <button class="btn" id="recBtn" title="R">Record <kbd>R</kbd></button>
+        <button class="btn" id="freezeBtn" title="F">Freeze <kbd>F</kbd></button>
+      </div>
+      <button class="btn" id="fsBtn2">⛶ Full screen <kbd>⇧F</kbd></button>
+      <label class="check"><input type="checkbox" id="optClean"> Clean view for streaming (hide labels &amp; toolbar)</label>
+      <label class="check"><input type="checkbox" id="optOverlay" checked> Burn measurements &amp; scale bar into photos</label>
+      <label class="check"><input type="checkbox" id="optAutosave"> Save each photo to Downloads automatically</label>
+    </div>
+
+    <div class="sec">
+      <h2>Scale</h2>
+      <div class="inline">
+        <select id="profSel" aria-label="Active scale"></select>
+        <button class="btn small" id="profDel" title="Delete this scale">Delete</button>
+      </div>
+      <div class="readout" id="scaleReadout">Uncalibrated · measuring in pixels</div>
+      <label class="check"><input type="checkbox" id="optScalebar" checked> Show scale bar</label>
+      <p class="hint">Put a ruler or stage micrometer under the lens, pick <b>Calibrate</b>, and drag across a known distance. Save one scale per zoom setting.</p>
+    </div>
+
+    <div class="sec">
+      <h2>Measurements <button class="btn small ghost" id="mClear">Clear all</button></h2>
+      <ul class="mlist" id="mList"></ul>
+      <p class="hint" id="mEmpty">Choose <b>Measure</b> and drag across a stone, prong or setting.</p>
+    </div>
+
+    <div class="sec">
+      <h2>Image <button class="btn small ghost" id="adjReset">Reset</button></h2>
+      <div class="slider"><label for="aB">Brightness</label><input type="range" id="aB" min="40" max="200" value="100"><span id="aBv">100</span></div>
+      <div class="slider"><label for="aC">Contrast</label><input type="range" id="aC" min="40" max="250" value="100"><span id="aCv">100</span></div>
+      <div class="slider"><label for="aS">Saturation</label><input type="range" id="aS" min="0" max="250" value="100"><span id="aSv">100</span></div>
+      <label class="check"><input type="checkbox" id="aG"> Black &amp; white</label>
+    </div>
+
+    <div class="sec">
+      <h2>View</h2>
+      <div class="grid2">
+        <button class="btn" id="flipH">Flip ↔</button>
+        <button class="btn" id="flipV">Flip ↕</button>
+        <button class="btn" id="rotL">Rotate ⟲</button>
+        <button class="btn" id="rotR">Rotate ⟳</button>
+      </div>
+      <div class="slider"><label for="zoomR">Zoom</label><input type="range" id="zoomR" min="0" max="100" value="0"><span id="zoomV">1.0×</span></div>
+      <button class="btn" id="viewReset">Reset view <kbd>0</kbd></button>
+      <div class="field">
+        <label for="ovSel">Overlay</label>
+        <select id="ovSel">
+          <option value="none">None</option>
+          <option value="cross">Crosshair</option>
+          <option value="grid">Grid</option>
+          <option value="reticle">Reticle rings</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="sec">
+      <h2>Camera hardware</h2>
+      <div id="hwControls" style="display:grid;gap:10px"></div>
+      <p class="hint" id="hwHint">Connect a camera to see the controls it exposes.</p>
+    </div>
+
+    <div class="sec">
+      <h2>This session <span id="gCount" class="readout" style="color:var(--muted)"></span></h2>
+      <div class="gallery" id="gallery"></div>
+      <p class="hint" id="gEmpty">Photos and clips appear here. Click Save to put one in Downloads.</p>
+    </div>
+  </aside>
+</main>
+
+<!-- Kept rendered (not display:none) so macOS Chrome keeps decoding frames; drawn onto the canvas. -->
+<video id="video" playsinline muted autoplay style="position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1"></video>
+
+<script>
+(() => {
+"use strict";
+const $ = s => document.querySelector(s);
+const store = {
+  ok: (()=>{ try{ localStorage.setItem("loupe:probe","1"); const r=localStorage.getItem("loupe:probe")==="1"; localStorage.removeItem("loupe:probe"); return r; }catch(e){ return false; } })(),
+  get(k, d){ try{ const v = localStorage.getItem("loupe:"+k); return v==null ? d : JSON.parse(v); }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem("loupe:"+k, JSON.stringify(v)); }catch(e){} }
+};
+const ENV = (()=>{
+  const ua=navigator.userAgent;
+  const browser = /Edg\//.test(ua)?"Edge" : /Chrome\//.test(ua)?"Chrome" : /Firefox\//.test(ua)?"Firefox" : /Safari\//.test(ua)?"Safari" : "Unknown";
+  let framed=false; try{ framed = window.self!==window.top; }catch(e){ framed=true; }
+  return { browser, framed, secure: window.isSecureContext, file: location.protocol==="file:",
+           media: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) };
+})();
+let lastError="";
+
+const stage = $("#stage"), ctx = stage.getContext("2d"), video = $("#video");
+const FILTER_OK = "filter" in ctx;
+const COLORS = { measure:"#cfa75e", calib:"#6fd3e0", guide:"rgba(255,255,255,.55)" };
+
+const S = {
+  stream:null, track:null,
+  deviceId: store.get("deviceId", ""), res: store.get("res", "1920x1080"),
+  frozen:null, zoom:1, pan:{x:0,y:0},
+  rot: store.get("rot",0), flipH: store.get("flipH",false), flipV: store.get("flipV",false),
+  adj: Object.assign({b:100,c:100,s:100,g:false}, store.get("adj",{})), overlay: store.get("overlay","none"),
+  tool:"pan", measures:[], draft:null, nextId:1,
+  cal: store.get("cal", {profiles:{}, active:""}),
+  scalebar: store.get("scalebar",true), burn: store.get("burn",true), autosave:false,
+  rec:null, recStart:0, gallery:[], dpr:1
+};
+
+/* ---------- Sample image (used until a camera connects) ---------- */
+const sample = document.createElement("canvas");
+(function drawSample(){
+  const W=1600,H=1200,PPM=100; sample.width=W; sample.height=H;
+  const g=sample.getContext("2d");
+  const grad=g.createRadialGradient(W/2,H/2,100,W/2,H/2,900);
+  grad.addColorStop(0,"#3a3833"); grad.addColorStop(1,"#121110");
+  g.fillStyle=grad; g.fillRect(0,0,W,H);
+  // ruler strip
+  const y0=780; g.fillStyle="#d9d2bf"; g.fillRect(100,y0,1400,170);
+  g.fillStyle="#1a1a1a"; g.font="500 26px IBM Plex Mono, monospace"; g.textAlign="center";
+  for(let i=0;i<=130;i++){
+    const x=150+i*PPM/10, len = i%10===0?70 : i%5===0?46:28;
+    g.fillRect(x-1,y0,2,len);
+    if(i%10===0) g.fillText(String(i/10),x,y0+104);
+  }
+  g.font="500 18px IBM Plex Mono, monospace"; g.fillText("mm  ·  sample scale: 100 px = 1 mm",800,y0+150);
+  // round stone, 3.0 mm
+  const cx=560, cy=400, r=150;
+  const sg=g.createRadialGradient(cx-40,cy-50,10,cx,cy,r);
+  sg.addColorStop(0,"#f4f8ff"); sg.addColorStop(.5,"#9fb3c9"); sg.addColorStop(1,"#3d4a5a");
+  g.fillStyle=sg; g.beginPath(); g.arc(cx,cy,r,0,Math.PI*2); g.fill();
+  g.strokeStyle="rgba(255,255,255,.55)"; g.lineWidth=2;
+  g.beginPath(); for(let k=0;k<8;k++){const a=k*Math.PI/4; g.moveTo(cx,cy); g.lineTo(cx+Math.cos(a)*r,cy+Math.sin(a)*r);} g.stroke();
+  g.beginPath(); for(let k=0;k<=8;k++){const a=k*Math.PI/4+Math.PI/8; const p=[cx+Math.cos(a)*r*.55,cy+Math.sin(a)*r*.55]; k?g.lineTo(...p):g.moveTo(...p);} g.stroke();
+  // prong / wire, 0.8 mm wide
+  g.fillStyle="#c9a24f"; g.fillRect(980,180,80,460);
+  g.fillStyle="rgba(255,255,255,.25)"; g.fillRect(992,180,14,460);
+  g.fillStyle="#cfc7b0"; g.font="500 22px IBM Plex Mono, monospace"; g.textAlign="left";
+  g.fillText("3.00 mm stone",440,600); g.fillText("0.80 mm wire",1090,420);
+})();
+
+/* ---------- Helpers ---------- */
+const src = () => {
+  if (S.frozen) return {el:S.frozen, w:S.frozen.width, h:S.frozen.height, kind:"frozen"};
+  if (S.stream && video.videoWidth) return {el:video, w:video.videoWidth, h:video.videoHeight, kind:"live"};
+  return {el:sample, w:sample.width, h:sample.height, kind:"sample"};
+};
+const dims = s => (S.rot % 180 ? {rw:s.h, rh:s.w} : {rw:s.w, rh:s.h});
+const fitScale = s => { const {rw,rh}=dims(s); return Math.min(stage.width/rw, stage.height/rh); };
+function viewMatrix(s){
+  const sc = fitScale(s)*S.zoom;
+  return {m:new DOMMatrix()
+    .translate(stage.width/2 + S.pan.x, stage.height/2 + S.pan.y)
+    .rotate(S.rot)
+    .scale(sc*(S.flipH?-1:1), sc*(S.flipV?-1:1))
+    .translate(-s.w/2, -s.h/2), sc};
+}
+const filterStr = () => `brightness(${S.adj.b}%) contrast(${S.adj.c}%) saturate(${S.adj.s}%)${S.adj.g?" grayscale(1)":""}`;
+const activeProfile = () => S.cal.profiles[S.cal.active] || null;
+function pxPerMm(s){ const p=activeProfile(); return p ? p.pxPerMm * (s.w / p.refWidth) : 0; }
+function fmtLen(px, s){
+  const ppm = pxPerMm(s);
+  if (!ppm) return Math.round(px) + " px";
+  const mm = px/ppm;
+  return mm < 1 ? Math.round(mm*1000) + " µm" : mm.toFixed(mm < 10 ? 3 : 2) + " mm";
+}
+const stamp = () => { const d=new Date(), p=n=>String(n).padStart(2,"0");
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; };
+
+/* ---------- Drawing ---------- */
+function drawGuides(g, w, h, k){
+  if (S.overlay==="none") return;
+  g.save(); g.strokeStyle=COLORS.guide; g.lineWidth=Math.max(1,k);
+  const cx=w/2, cy=h/2, m=Math.min(w,h);
+  g.beginPath();
+  if (S.overlay==="cross"){
+    g.moveTo(0,cy); g.lineTo(w,cy); g.moveTo(cx,0); g.lineTo(cx,h);
+    g.moveTo(cx+14*k,cy); g.arc(cx,cy,14*k,0,Math.PI*2);
+  } else if (S.overlay==="grid"){
+    const cell=m/8;
+    for(let x=cx%cell; x<w; x+=cell){ g.moveTo(x,0); g.lineTo(x,h); }
+    for(let y=cy%cell; y<h; y+=cell){ g.moveTo(0,y); g.lineTo(w,y); }
+  } else if (S.overlay==="reticle"){
+    [.12,.24,.36,.46].forEach(f=>{ g.moveTo(cx+m*f,cy); g.arc(cx,cy,m*f,0,Math.PI*2); });
+    g.moveTo(cx-m*.5,cy); g.lineTo(cx-m*.05,cy); g.moveTo(cx+m*.05,cy); g.lineTo(cx+m*.5,cy);
+    g.moveTo(cx,cy-m*.5); g.lineTo(cx,cy-m*.05); g.moveTo(cx,cy+m*.05); g.lineTo(cx,cy+m*.5);
+  }
+  g.stroke(); g.restore();
+}
+function label(g, text, x, y, k, color){
+  g.font=`500 ${13*k}px "IBM Plex Mono", Menlo, monospace`;
+  const tw=g.measureText(text).width, ph=20*k, pw=tw+12*k;
+  g.fillStyle="rgba(10,11,13,.8)"; g.beginPath();
+  g.roundRect ? g.roundRect(x-pw/2,y-ph/2,pw,ph,4*k) : g.rect(x-pw/2,y-ph/2,pw,ph); g.fill();
+  g.fillStyle=color; g.textAlign="center"; g.textBaseline="middle"; g.fillText(text,x,y+0.5*k);
+}
+function drawLine(g, m, a, b, k, color, text){
+  const pa=m.transformPoint(new DOMPoint(a.x,a.y)), pb=m.transformPoint(new DOMPoint(b.x,b.y));
+  const dx=pb.x-pa.x, dy=pb.y-pa.y, L=Math.hypot(dx,dy)||1, nx=-dy/L*7*k, ny=dx/L*7*k;
+  g.save(); g.lineCap="round";
+  const path=()=>{ g.beginPath(); g.moveTo(pa.x,pa.y); g.lineTo(pb.x,pb.y);
+    g.moveTo(pa.x-nx,pa.y-ny); g.lineTo(pa.x+nx,pa.y+ny); g.moveTo(pb.x-nx,pb.y-ny); g.lineTo(pb.x+nx,pb.y+ny); };
+  path(); g.strokeStyle="rgba(0,0,0,.6)"; g.lineWidth=4*k; g.stroke();
+  path(); g.strokeStyle=color; g.lineWidth=1.6*k; g.stroke();
+  const off = 16*k, sx = (ny/(7*k))*off, sy = (-nx/(7*k))*off;
+  label(g, text, (pa.x+pb.x)/2 - sx, (pa.y+pb.y)/2 - sy, k, color);
+  g.restore();
+}
+function drawMarks(g, m, s, k){
+  S.measures.forEach((ms,i)=>{
+    const px=Math.hypot(ms.b.x-ms.a.x, ms.b.y-ms.a.y);
+    drawLine(g, m, ms.a, ms.b, k, COLORS.measure, `${i+1}  ${fmtLen(px,s)}`);
+  });
+  if (S.draft){
+    const d=S.draft, px=Math.hypot(d.b.x-d.a.x, d.b.y-d.a.y);
+    const calib=S.tool==="calibrate";
+    drawLine(g, m, d.a, d.b, k, calib?COLORS.calib:COLORS.measure, calib ? Math.round(px)+" px" : fmtLen(px,s));
+  }
+}
+function drawScalebar(g, s, sc, w, h, k){
+  const ppm=pxPerMm(s); if(!ppm || !S.scalebar) return;
+  const steps=[0.005,0.01,0.02,0.05,0.1,0.2,0.25,0.5,1,2,5,10,20,50];
+  let L=steps[0]; for(const v of steps){ if(v*ppm*sc <= 170*k) L=v; }
+  const bw=L*ppm*sc, x=20*k, y=h-28*k;
+  g.save();
+  g.fillStyle="rgba(10,11,13,.7)"; g.fillRect(x-8*k,y-26*k,bw+16*k,40*k);
+  g.fillStyle="#fff"; g.fillRect(x,y,bw,4*k); g.fillRect(x,y-4*k,2*k,12*k); g.fillRect(x+bw-2*k,y-4*k,2*k,12*k);
+  g.font=`500 ${12*k}px "IBM Plex Mono", Menlo, monospace`; g.textAlign="left"; g.textBaseline="alphabetic";
+  g.fillText(L<1 ? Math.round(L*1000)+" µm" : L+" mm", x, y-8*k);
+  g.restore();
+}
+function render(){
+  const s=src(), {m,sc}=viewMatrix(s), k=S.dpr;
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.fillStyle="#0b0c0e"; ctx.fillRect(0,0,stage.width,stage.height);
+  ctx.setTransform(m);
+  if (FILTER_OK) ctx.filter=filterStr(); else stage.style.filter=filterStr();
+  ctx.imageSmoothingEnabled = S.zoom*fitScale(s) < 3;
+  try{ ctx.drawImage(s.el,0,0); }catch(e){}
+  ctx.filter="none"; ctx.setTransform(1,0,0,1,0,0);
+  drawGuides(ctx, stage.width, stage.height, k);
+  drawMarks(ctx, m, s, k);
+  drawScalebar(ctx, s, sc, stage.width, stage.height, k);
+}
+function loop(){ render(); hudTick(); requestAnimationFrame(loop); }
+
+/* ---------- HUD ---------- */
+let lastHud="";
+function hudTick(){
+  const s=src(); let html="";
+  if (s.kind==="sample") html+=`<span class="tag sample">SAMPLE</span>`;
+  if (s.kind==="live") html+=`<span class="tag">LIVE</span>`;
+  if (s.kind==="frozen") html+=`<span class="tag frozen">FROZEN</span>`;
+  if (S.rec){ const t=Math.floor((performance.now()-S.recStart)/1000);
+    html+=`<span class="tag rec">● REC ${String(Math.floor(t/60)).padStart(2,"0")}:${String(t%60).padStart(2,"0")}</span>`; }
+  const p=activeProfile(); if (p) html+=`<span class="tag">${escapeHtml(S.cal.active)}</span>`;
+  if (html!==lastHud){ $("#hudTL").innerHTML=html; lastHud=html; }
+  const fps = s.kind==="live" ? realFps : 0;
+  $("#hudInfo").textContent = `${s.w}×${s.h}${s.kind==="live"?` · ${fps} fps`:""} · ${(S.zoom).toFixed(1)}×`;
+}
+function escapeHtml(t){ return String(t).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+/* ---------- Resize ---------- */
+function resize(){
+  const r=$("#stageWrap").getBoundingClientRect();
+  S.dpr=window.devicePixelRatio||1;
+  stage.width=Math.max(1,Math.round(r.width*S.dpr)); stage.height=Math.max(1,Math.round(r.height*S.dpr));
+}
+new ResizeObserver(resize).observe($("#stageWrap"));
+
+/* ---------- Pointer: pan / measure / calibrate ---------- */
+const canvasPt = e => { const r=stage.getBoundingClientRect(); return {x:(e.clientX-r.left)*S.dpr, y:(e.clientY-r.top)*S.dpr}; };
+const toImage = p => { const {m}=viewMatrix(src()); const q=m.inverse().transformPoint(new DOMPoint(p.x,p.y)); return {x:q.x,y:q.y}; };
+let drag=null;
+stage.addEventListener("pointerdown", e=>{
+  if (e.button!==0) return;
+  stage.setPointerCapture(e.pointerId);
+  const p=canvasPt(e);
+  if (S.tool==="pan"){ drag={x:p.x,y:p.y,px:S.pan.x,py:S.pan.y}; stage.classList.add("dragging"); }
+  else { const ip=toImage(p); S.draft={a:ip,b:{...ip}}; }
+});
+stage.addEventListener("pointermove", e=>{
+  const p=canvasPt(e), ip=toImage(p), s=src();
+  const ppm=pxPerMm(s);
+  $("#hudCursor").textContent = ppm ? `x ${(ip.x/ppm).toFixed(3)}  y ${(ip.y/ppm).toFixed(3)} mm` : `x ${Math.round(ip.x)}  y ${Math.round(ip.y)} px`;
+  if (drag){ S.pan.x=drag.px+(p.x-drag.x); S.pan.y=drag.py+(p.y-drag.y); }
+  else if (S.draft){ S.draft.b=ip; }
+});
+const endPointer = ()=>{
+  if (drag){ drag=null; stage.classList.remove("dragging"); return; }
+  if (!S.draft) return;
+  const d=S.draft; S.draft=null;
+  const px=Math.hypot(d.b.x-d.a.x, d.b.y-d.a.y);
+  if (px<3) return;
+  if (S.tool==="measure"){ S.measures.push({id:S.nextId++, a:d.a, b:d.b}); renderMeasures(); }
+  else if (S.tool==="calibrate"){ openCal(px); }
+};
+stage.addEventListener("pointerup", endPointer);
+stage.addEventListener("pointercancel", ()=>{ drag=null; S.draft=null; stage.classList.remove("dragging"); });
+stage.addEventListener("wheel", e=>{
+  e.preventDefault();
+  const f=Math.exp(-e.deltaY*0.0018); zoomAt(S.zoom*f, canvasPt(e));
+},{passive:false});
+stage.addEventListener("dblclick", ()=>{ if(S.tool==="pan") resetView(); });
+
+function zoomAt(z, p){
+  z=Math.min(32,Math.max(1,z));
+  const c={x:stage.width/2, y:stage.height/2}, r=z/S.zoom;
+  p=p||c;
+  S.pan.x = (p.x-c.x) - (p.x-c.x-S.pan.x)*r;
+  S.pan.y = (p.y-c.y) - (p.y-c.y-S.pan.y)*r;
+  S.zoom=z; if (z===1){ S.pan={x:0,y:0}; }
+  syncZoomUI();
+}
+function syncZoomUI(){ $("#zoomR").value=Math.round(Math.log(S.zoom)/Math.log(32)*100); $("#zoomV").textContent=S.zoom.toFixed(1)+"×"; }
+function resetView(){ S.zoom=1; S.pan={x:0,y:0}; syncZoomUI(); }
+
+/* ---------- Tools ---------- */
+function setTool(t){
+  S.tool=t; S.draft=null;
+  document.querySelectorAll(".tools [data-tool]").forEach(b=>b.setAttribute("aria-pressed", String(b.dataset.tool===t)));
+  stage.className="t-"+t;
+}
+document.querySelectorAll(".tools [data-tool]").forEach(b=>b.addEventListener("click",()=>setTool(b.dataset.tool)));
+const wrap=$("#stageWrap");
+function toggleFullscreen(){
+  const fsEl=document.fullscreenElement||document.webkitFullscreenElement;
+  if (fsEl){ (document.exitFullscreen||document.webkitExitFullscreen).call(document); return; }
+  const req=wrap.requestFullscreen||wrap.webkitRequestFullscreen;
+  if (!req) return;
+  try{ const r=req.call(wrap); if (r&&r.catch) r.catch(()=>{}); }catch(e){}
+}
+let idleT=null;
+function wake(){ wrap.classList.remove("idle"); clearTimeout(idleT);
+  if (wrap.classList.contains("fs")) idleT=setTimeout(()=>wrap.classList.add("idle"),2500); }
+function onFs(){
+  const on=!!(document.fullscreenElement||document.webkitFullscreenElement);
+  wrap.classList.toggle("fs",on);
+  const t = on ? "⛶ Exit full screen" : "⛶ Full screen";
+  $("#fsBtn").textContent=t; $("#fsBtn2").firstChild.textContent=t+" ";
+  wake();
+}
+document.addEventListener("fullscreenchange",onFs); document.addEventListener("webkitfullscreenchange",onFs);
+wrap.addEventListener("pointermove",wake);
+$("#fsBtn").addEventListener("click",toggleFullscreen);
+$("#fsBtn2").addEventListener("click",toggleFullscreen);
+$("#optClean").checked=store.get("clean",false); wrap.classList.toggle("clean",$("#optClean").checked);
+$("#optClean").addEventListener("change",e=>{ wrap.classList.toggle("clean",e.target.checked); store.set("clean",e.target.checked); });
+
+/* ---------- Calibration ---------- */
+let pendingCalPx=0;
+function openCal(px){
+  pendingCalPx=px;
+  $("#calMsg").textContent=`Your line is ${Math.round(px)} px long. Enter the real distance it spans.`;
+  $("#calName").value = S.cal.active || "";
+  $("#calDialog").hidden=false; setTimeout(()=>$("#calLen").select(),0);
+}
+$("#calCancel").addEventListener("click", ()=>{ $("#calDialog").hidden=true; });
+$("#calForm").addEventListener("submit", e=>{
+  e.preventDefault();
+  const len=parseFloat($("#calLen").value), name=$("#calName").value.trim();
+  if (!(len>0) || !name) return;
+  S.cal.profiles[name]={pxPerMm:pendingCalPx/len, refWidth:src().w};
+  S.cal.active=name; store.set("cal",S.cal);
+  $("#calDialog").hidden=true; renderProfiles(); renderMeasures(); setTool("measure");
+});
+function renderProfiles(){
+  const sel=$("#profSel"); sel.innerHTML="";
+  const none=new Option("No scale (pixels)",""); sel.add(none);
+  Object.keys(S.cal.profiles).forEach(n=>sel.add(new Option(n,n)));
+  sel.value=S.cal.active||"";
+  const p=activeProfile(), s=src();
+  $("#scaleReadout").textContent = p ? `${pxPerMm(s).toFixed(1)} px per mm at ${s.w} px wide` : "Uncalibrated · measuring in pixels";
+  $("#profDel").disabled=!p;
+}
+$("#profSel").addEventListener("change", e=>{ S.cal.active=e.target.value; store.set("cal",S.cal); renderProfiles(); renderMeasures(); });
+$("#profDel").addEventListener("click", ()=>{ delete S.cal.profiles[S.cal.active]; S.cal.active=""; store.set("cal",S.cal); renderProfiles(); renderMeasures(); });
+
+/* ---------- Measurements list ---------- */
+function renderMeasures(){
+  const ul=$("#mList"), s=src(); ul.innerHTML="";
+  S.measures.forEach((ms,i)=>{
+    const li=document.createElement("li");
+    const px=Math.hypot(ms.b.x-ms.a.x, ms.b.y-ms.a.y);
+    li.innerHTML=`<i>${i+1}</i><b>${fmtLen(px,s)}</b>`;
+    const del=document.createElement("button"); del.className="btn small ghost"; del.textContent="Remove";
+    del.addEventListener("click",()=>{ S.measures=S.measures.filter(x=>x.id!==ms.id); renderMeasures(); });
+    li.appendChild(del); ul.appendChild(li);
+  });
+  $("#mEmpty").hidden = S.measures.length>0;
+  $("#mClear").hidden = S.measures.length===0;
+}
+$("#mClear").addEventListener("click", ()=>{ S.measures=[]; renderMeasures(); });
+
+/* ---------- Adjustments & view ---------- */
+function syncAdjUI(){
+  [["aB","b"],["aC","c"],["aS","s"]].forEach(([id,key])=>{ $("#"+id).value=S.adj[key]; $("#"+id+"v").textContent=S.adj[key]; });
+  $("#aG").checked=S.adj.g;
+}
+[["aB","b"],["aC","c"],["aS","s"]].forEach(([id,key])=>{
+  $("#"+id).addEventListener("input", e=>{ S.adj[key]=+e.target.value; $("#"+id+"v").textContent=e.target.value; store.set("adj",S.adj); });
+});
+$("#aG").addEventListener("change", e=>{ S.adj.g=e.target.checked; store.set("adj",S.adj); });
+$("#adjReset").addEventListener("click", ()=>{ S.adj={b:100,c:100,s:100,g:false}; store.set("adj",S.adj); syncAdjUI(); });
+syncAdjUI();
+$("#flipH").classList.toggle("on",S.flipH); $("#flipV").classList.toggle("on",S.flipV);
+$("#flipH").addEventListener("click", e=>{ S.flipH=!S.flipH; e.currentTarget.classList.toggle("on",S.flipH); store.set("flipH",S.flipH); });
+$("#flipV").addEventListener("click", e=>{ S.flipV=!S.flipV; e.currentTarget.classList.toggle("on",S.flipV); store.set("flipV",S.flipV); });
+$("#rotL").addEventListener("click", ()=>{ S.rot=(S.rot+270)%360; store.set("rot",S.rot); });
+$("#rotR").addEventListener("click", ()=>{ S.rot=(S.rot+90)%360; store.set("rot",S.rot); });
+$("#zoomR").addEventListener("input", e=>{ zoomAt(Math.pow(32, e.target.value/100)); });
+$("#viewReset").addEventListener("click", resetView);
+$("#ovSel").value=S.overlay;
+$("#ovSel").addEventListener("change", e=>{ S.overlay=e.target.value; store.set("overlay",S.overlay); });
+$("#optScalebar").checked=S.scalebar; $("#optOverlay").checked=S.burn;
+$("#optScalebar").addEventListener("change", e=>{ S.scalebar=e.target.checked; store.set("scalebar",S.scalebar); });
+$("#optOverlay").addEventListener("change", e=>{ S.burn=e.target.checked; store.set("burn",S.burn); });
+$("#optAutosave").checked = S.autosave = store.get("autosave", false);
+$("#optAutosave").addEventListener("change", e=>{ S.autosave=e.target.checked; store.set("autosave",S.autosave); });
+
+/* ---------- Freeze ---------- */
+function toggleFreeze(){
+  if (S.frozen){ S.frozen=null; }
+  else {
+    const s=src(); const c=document.createElement("canvas"); c.width=s.w; c.height=s.h;
+    c.getContext("2d").drawImage(s.el,0,0); S.frozen=c;
+  }
+  $("#freezeBtn").classList.toggle("on", !!S.frozen);
+  $("#stageWrap").classList.toggle("is-frozen", !!S.frozen);
+  $("#freezeBtn").firstChild.textContent = S.frozen ? "Unfreeze " : "Freeze ";
+}
+$("#freezeBtn").addEventListener("click", toggleFreeze);
+
+/* ---------- Photo capture (full sensor resolution) ---------- */
+function snap(){
+  const s=src(), {rw,rh}=dims(s);
+  const c=document.createElement("canvas"); c.width=rw; c.height=rh;
+  const g=c.getContext("2d");
+  const m=new DOMMatrix().translate(rw/2,rh/2).rotate(S.rot).scale(S.flipH?-1:1, S.flipV?-1:1).translate(-s.w/2,-s.h/2);
+  g.setTransform(m); if (FILTER_OK) g.filter=filterStr();
+  g.drawImage(s.el,0,0); g.filter="none"; g.setTransform(1,0,0,1,0,0);
+  if (S.burn){ const k=Math.max(1, rw/1300); drawMarks(g,m,s,k); drawScalebar(g,s,1,rw,rh,k); }
+  const f=$("#flash"); f.classList.add("on"); requestAnimationFrame(()=>requestAnimationFrame(()=>f.classList.remove("on")));
+  c.toBlob(b=>{ if(b) addItem({kind:"image", blob:b, name:`scope_${stamp()}.png`, w:rw, h:rh}); }, "image/png");
+}
+$("#snapBtn").addEventListener("click", snap);
+
+/* ---------- Recording (records what you see on screen) ---------- */
+function toggleRec(){
+  if (S.rec){ S.rec.stop(); return; }
+  if (!window.MediaRecorder || !stage.captureStream){ setStatus("This browser can't record video", "err"); return; }
+  const types=["video/mp4;codecs=avc1.640028","video/mp4;codecs=avc1","video/mp4","video/webm;codecs=vp9","video/webm"];
+  const type=types.find(t=>MediaRecorder.isTypeSupported(t))||"";
+  const rec=new MediaRecorder(stage.captureStream(30), type?{mimeType:type, videoBitsPerSecond:16e6}:{});
+  const chunks=[];
+  rec.ondataavailable=e=>{ if(e.data.size) chunks.push(e.data); };
+  rec.onstop=()=>{
+    const mime=rec.mimeType||type||"video/webm", ext=mime.includes("mp4")?"mp4":"webm";
+    addItem({kind:"video", blob:new Blob(chunks,{type:mime}), name:`scope_${stamp()}.${ext}`});
+    S.rec=null; $("#recBtn").classList.remove("rec-on"); $("#recBtn").firstChild.textContent="Record ";
+  };
+  rec.start(1000); S.rec=rec; S.recStart=performance.now();
+  $("#recBtn").classList.add("rec-on"); $("#recBtn").firstChild.textContent="Stop ";
+}
+$("#recBtn").addEventListener("click", toggleRec);
+
+/* ---------- Session gallery ---------- */
+function download(item){
+  const a=document.createElement("a"); a.href=item.url; a.download=item.name;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+function addItem(item){
+  item.url=URL.createObjectURL(item.blob); S.gallery.unshift(item); renderGallery();
+  if (S.autosave || item.kind==="video") download(item);
+}
+function renderGallery(){
+  const g=$("#gallery"); g.innerHTML="";
+  S.gallery.forEach(it=>{
+    const d=document.createElement("div"); d.className="gitem";
+    const media = it.kind==="image" ? Object.assign(document.createElement("img"),{src:it.url, alt:it.name})
+      : Object.assign(document.createElement("video"),{src:it.url, controls:true, muted:true});
+    const meta=document.createElement("div"); meta.className="meta";
+    const nm=document.createElement("span"); nm.textContent=(it.blob.size/1e6).toFixed(1)+" MB"; nm.title=it.name;
+    const save=document.createElement("a"); save.href="#"; save.textContent="Save";
+    save.addEventListener("click",e=>{ e.preventDefault(); download(it); });
+    const del=document.createElement("a"); del.href="#"; del.textContent="✕"; del.title="Remove"; del.style.color="var(--muted)";
+    del.addEventListener("click",e=>{ e.preventDefault(); URL.revokeObjectURL(it.url); S.gallery=S.gallery.filter(x=>x!==it); renderGallery(); });
+    meta.append(nm, save, del); d.append(media, meta); g.appendChild(d);
+  });
+  $("#gEmpty").hidden=S.gallery.length>0;
+  $("#gCount").textContent=S.gallery.length?String(S.gallery.length):"";
+}
+
+/* ---------- Camera ---------- */
+function setStatus(text, cls){ const c=$("#statusChip"); c.textContent=text; c.className="chip"+(cls?" "+cls:""); }
+function stopStream(){ if(S.stream){ S.stream.getTracks().forEach(t=>t.stop()); } S.stream=null; S.track=null; }
+let camCount=null, camPerm="unknown";
+async function listDevices(){
+  const sel=$("#camSel");
+  let devs=[];
+  if (ENV.media && navigator.mediaDevices.enumerateDevices){
+    try{ devs=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==="videoinput"); }catch(e){}
+  }
+  camCount=devs.length;
+  sel.innerHTML="";
+  if (!devs.length){ sel.add(new Option(ENV.media ? "No cameras found" : "Camera not available here","")); renderDiag(); return; }
+  // Before permission is granted, browsers hide names (and sometimes ids).
+  devs.forEach((d,i)=>sel.add(new Option(d.label||`Camera ${i+1} (connect to see name)`, d.deviceId)));
+  if (S.deviceId && devs.some(d=>d.deviceId===S.deviceId)) sel.value=S.deviceId;
+  renderDiag();
+}
+async function startCamera(recovering){
+  if (!ENV.media){ lastError="This browser window doesn't allow camera access."; setStatus("Camera not available here","err"); renderDiag(); return; }
+  stopStream();
+  if (!(recovering===true && S.frozen)){ S.frozen=null; $("#freezeBtn").classList.remove("on"); $("#freezeBtn").firstChild.textContent="Freeze "; $("#stageWrap").classList.remove("is-frozen"); }
+  const [w,h]=S.res.split("x").map(Number);
+  const base={width:{ideal:w}, height:{ideal:h}, frameRate:{ideal:30}};
+  setStatus("Connecting…");
+  // Try progressively simpler requests: chosen camera at chosen size → any camera at that size → any camera, any size.
+  const attempts=[];
+  if (S.deviceId) attempts.push({...base, deviceId:{exact:S.deviceId}});
+  attempts.push(base, true);
+  let stream=null, err=null;
+  for (const v of attempts){
+    try{ stream=await navigator.mediaDevices.getUserMedia({audio:false, video:v}); break; }
+    catch(e){ err=e; if (e.name==="NotAllowedError"||e.name==="SecurityError") break; }
+  }
+  if (!stream){
+    const n=err&&err.name;
+    lastError = n==="NotAllowedError" ? "Camera permission was blocked. In Chrome, click the camera icon at the right of the address bar and choose Allow. On a Mac, also check System Settings → Privacy & Security → Camera → Google Chrome."
+      : n==="NotFoundError" ? "The browser can't see any camera. Unplug the microscope, plug it straight into the Mac (not a hub), and click Refresh."
+      : n==="NotReadableError" ? "The camera is in use by another app (Photo Booth, Zoom, FaceTime, the microscope's own app). Quit that app and try again."
+      : `Couldn't start the camera (${n||"unknown error"}${err&&err.message?": "+err.message:""}).`;
+    setStatus(n==="NotAllowedError"?"Permission blocked":n==="NotFoundError"?"No camera found":n==="NotReadableError"?"Camera busy":"Couldn't start camera","err");
+    camPerm = n==="NotAllowedError" ? "denied" : camPerm;
+    await listDevices(); return;
+  }
+  if (!lastError.startsWith("The camera kept")) lastError="";
+  camPerm="granted"; store.set("autoConnect",true);
+  hadFrames=false; startWatchdog(); keepAwake();
+  S.stream=stream; S.track=stream.getVideoTracks()[0];
+  video.srcObject=stream; try{ await video.play(); }catch(e){}
+  const st=S.track.getSettings(); S.deviceId=st.deviceId||S.deviceId; store.set("deviceId",S.deviceId);
+  S.track.addEventListener("ended", ()=>{ stopStream(); setStatus("Camera disconnected","err"); $("#emptyCard").hidden=false; });
+  await listDevices();
+  setStatus((S.track.label||"Camera").slice(0,32)+" · live","live");
+  $("#emptyCard").hidden=true;
+  if (recovering!==true) resetView();
+  // wait for dimensions, then refresh scale readouts
+  const ready=()=>{ renderProfiles(); renderMeasures(); };
+  video.videoWidth ? ready() : video.addEventListener("loadedmetadata", ready, {once:true});
+  buildHw();
+}
+$("#connectBtn").addEventListener("click", startCamera);
+$("#camSel").addEventListener("change", e=>{ S.deviceId=e.target.value; store.set("deviceId",S.deviceId); startCamera(); });
+$("#resSel").value=S.res;
+$("#resSel").addEventListener("change", e=>{ S.res=e.target.value; store.set("res",S.res); if(S.stream) startCamera(); });
+if (navigator.mediaDevices && navigator.mediaDevices.addEventListener){
+  navigator.mediaDevices.addEventListener("devicechange", listDevices);
+}
+
+/* ---------- Hardware controls (whatever the camera exposes) ---------- */
+function buildHw(){
+  const box=$("#hwControls"); box.innerHTML="";
+  const t=S.track; const caps = t && t.getCapabilities ? t.getCapabilities() : {};
+  const set = t ? t.getSettings() : {};
+  const names={exposureMode:"Exposure",exposureCompensation:"Exposure ±",exposureTime:"Shutter",brightness:"Brightness",contrast:"Contrast",
+    saturation:"Saturation",sharpness:"Sharpness",whiteBalanceMode:"White balance",colorTemperature:"Color temp",focusMode:"Focus",focusDistance:"Focus dist.",zoom:"Optical zoom"};
+  let n=0;
+  const apply = (k,v)=> t.applyConstraints({advanced:[{[k]:v}]}).catch(()=>{});
+  Object.keys(names).forEach(k=>{
+    const c=caps[k]; if(!c) return;
+    if (Array.isArray(c) && c.length>1){
+      const row=document.createElement("div"); row.className="field";
+      const lb=document.createElement("label"); lb.textContent=names[k]; lb.htmlFor="hw_"+k;
+      const sel=document.createElement("select"); sel.id="hw_"+k;
+      c.forEach(o=>sel.add(new Option(o,o))); if(set[k]) sel.value=set[k];
+      sel.addEventListener("change",()=>apply(k,sel.value));
+      row.append(lb,sel); box.appendChild(row); n++;
+    } else if (typeof c==="object" && "min" in c && c.max>c.min){
+      const row=document.createElement("div"); row.className="slider";
+      const lb=document.createElement("label"); lb.textContent=names[k]; lb.htmlFor="hw_"+k;
+      const r=document.createElement("input"); r.type="range"; r.id="hw_"+k; r.min=c.min; r.max=c.max; r.step=c.step||((c.max-c.min)/100);
+      r.value = set[k]!=null ? set[k] : (c.min+c.max)/2;
+      const out=document.createElement("span"); out.textContent=(+r.value).toFixed(r.step<1?1:0);
+      r.addEventListener("input",()=>{ out.textContent=(+r.value).toFixed(r.step<1?1:0);
+        const modeKey = k==="exposureTime"||k==="exposureCompensation" ? "exposureMode" : k==="focusDistance" ? "focusMode" : k==="colorTemperature" ? "whiteBalanceMode" : null;
+        const adv={[k]:+r.value}; if(modeKey && caps[modeKey] && caps[modeKey].includes("manual")) adv[modeKey]="manual";
+        t.applyConstraints({advanced:[adv]}).catch(()=>{}); });
+      row.append(lb,r,out); box.appendChild(row); n++;
+    }
+  });
+  $("#hwHint").textContent = !t ? "Connect a camera to see the controls it exposes."
+    : n ? "These go straight to the camera sensor and are saved in every photo and clip."
+    : "This camera doesn't expose exposure or focus to the browser. Use the Image sliders above instead.";
+}
+
+/* ---------- Picture watchdog: are real frames arriving? ---------- */
+let picState="", wd=null, wdLastT=-1, wdStill=0, wdBlack=0, wdFellBack=false;
+const probe=document.createElement("canvas"); probe.width=32; probe.height=18;
+const pctx=probe.getContext("2d",{willReadFrequently:true});
+function startWatchdog(){
+  clearInterval(wd); picState="checking"; wdLastT=-1; wdStill=0; wdBlack=0; renderDiag();
+  wd=setInterval(()=>{
+    if (!S.stream){ clearInterval(wd); picState=""; renderDiag(); return; }
+    if (video.paused) video.play().catch(()=>{});
+    const t=video.currentTime, moving = t!==wdLastT && video.readyState>=2 && video.videoWidth>0;
+    wdLastT=t;
+    let mean=0;
+    if (video.videoWidth){ try{
+      pctx.drawImage(video,0,0,32,18);
+      const d=pctx.getImageData(0,0,32,18).data; for(let i=0;i<d.length;i+=4) mean+=d[i]+d[i+1]+d[i+2];
+      mean/= (d.length/4)*3;
+    }catch(e){} }
+    wdStill = moving?0:wdStill+1;
+    wdBlack = moving && mean<6 ? wdBlack+1 : 0;
+    const prev=picState;
+    if (moving && mean>=6) hadFrames=true;
+    picState = wdStill>=3 ? (hadFrames?"stalled":"none") : wdBlack>=3 ? "black" : moving ? "ok" : "checking";
+    if (picState==="stalled"){
+      // Picture was working, then stopped: the camera stopped sending. Reconnect it.
+      stalls++; lastStall=new Date();
+      if (stalls>=3 && S.res!=="1280x720" && S.res!=="640x480"){
+        S.res="1280x720"; $("#resSel").value=S.res; store.set("res",S.res);
+        lastError="The camera kept freezing at the higher resolution, so I lowered it to 720p.";
+      }
+      startCamera(true); return;
+    }
+    // No frames at all at a high resolution → drop to VGA once, which nearly every USB microscope supports.
+    if (picState==="none" && !wdFellBack && S.res!=="640x480"){
+      wdFellBack=true; S.res="640x480"; $("#resSel").value=S.res; store.set("res",S.res);
+      lastError="No picture at the higher resolution, so I switched to 640×480. Try stepping it up again once you see an image.";
+      startCamera(); return;
+    }
+    if (prev!==picState) renderDiag();
+  },1000);
+}
+let hadFrames=false, stalls=0, lastStall=null;
+// Real delivered frame rate (what the camera actually sends, not what it claims).
+let frameCount=0, realFps=0;
+function countFrames(){ frameCount++; if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(countFrames); }
+if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(countFrames);
+setInterval(()=>{ realFps=frameCount; frameCount=0; },1000);
+// Keep the Mac from napping the page while streaming or recording.
+let wakeLock=null;
+async function keepAwake(){ try{ if (navigator.wakeLock && !wakeLock) { wakeLock=await navigator.wakeLock.request("screen"); wakeLock.addEventListener("release",()=>{ wakeLock=null; }); } }catch(e){} }
+document.addEventListener("visibilitychange",()=>{ if (document.visibilityState==="visible" && S.stream) keepAwake(); });
+
+/* ---------- Connection check ---------- */
+function renderDiag(){
+  const picLabel={ok:"receiving",black:"all black",none:"no frames",stalled:"froze, reconnecting",checking:"checking…"}[picState];
+  const rows=[
+    ["Browser", ENV.browser, ENV.browser==="Chrome"||ENV.browser==="Edge"],
+    ["Opened as", ENV.framed ? "embedded preview" : ENV.file ? "local file" : location.protocol.replace(":",""), !ENV.framed],
+    ["Camera access", ENV.media ? (camPerm==="granted"?"allowed":camPerm==="denied"?"blocked":"not asked yet") : "unavailable", ENV.media && camPerm!=="denied"],
+    ["Cameras found", camCount==null ? "…" : String(camCount), camCount==null ? null : camCount>0],
+    ["Settings saving", store.ok ? "working" : "blocked", store.ok]
+  ];
+  if (picState) rows.splice(4,0,["Picture", picLabel, picState==="ok" ? true : picState==="checking" ? null : false]);
+  if (S.track) rows.splice(4,0,["Using", (S.track.label||"camera").slice(0,26), null]);
+  if (stalls) rows.push(["Freezes fixed", `${stalls} · last ${lastStall.toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})}`, stalls<3 ? null : false]);
+  $("#diagList").innerHTML = rows.map(([k,v,good])=>`<li class="${good===true?"good":good===false?"bad":""}"><span class="dot"></span><span>${k}</span><b>${escapeHtml(v)}</b></li>`).join("");
+
+  let html="";
+  if (ENV.framed){
+    html=`<strong>This preview can't use the camera or save settings.</strong>
+      <ol><li>Download <b>loupe-bench.html</b> to your Mac.</li><li>In Finder, right-click it → <b>Open With → Google Chrome</b>.</li></ol>`;
+  } else if (ENV.browser==="Safari" || ENV.browser==="Firefox" || !ENV.media){
+    html=`<strong>${ENV.browser} won't give a file opened from your Mac access to the camera${store.ok?"":", and it won't save settings"}.</strong>
+      <ol><li>Close this tab.</li><li>In Finder, right-click <b>loupe-bench.html</b> → <b>Open With → Google Chrome</b>.</li>
+      <li>Optional: <b>Get Info</b> on the file → Open with: Chrome → <b>Change All…</b> so double-clicking always uses Chrome.</li></ol>`;
+  } else if (!store.ok){
+    html=`<strong>Chrome is blocking saved settings.</strong> Check Chrome Settings → Privacy and security → Third-party cookies and site data, and make sure "Block all" isn't on. Incognito windows never keep settings.`;
+  } else if (picState==="none"){
+    html=`<strong>The camera is connected but isn't sending a picture.</strong>
+      <ol><li>Set <b>Resolution</b> to 640×480 or 720p.</li>
+      <li>Quit any other app using the microscope (its own viewer, Photo Booth, Zoom), then click <b>Refresh</b>.</li>
+      <li>Unplug the microscope, wait 5 seconds, plug it straight into the Mac, and reload this page.</li></ol>`;
+  } else if (picState==="black"){
+    html=`<strong>The picture is arriving, but it's completely black.</strong>
+      <ol><li>Check that <b>Using</b> above shows the microscope and not "FaceTime HD Camera". With the laptop lid closed, that camera only sends black. If it's the wrong one, pick the microscope in the <b>Camera</b> menu.</li>
+      <li>Turn on the microscope's LED ring and remove any lens cap.</li>
+      <li>Try a lower <b>Resolution</b>.</li></ol>`;
+  } else if (stalls>=3){
+    html=`<strong>The camera keeps freezing (${stalls} times). That usually means it isn't getting enough USB bandwidth or power.</strong>
+      <ol><li>Plug it straight into the Mac, not through a hub or a monitor's USB port.</li>
+      <li>Use a lower <b>Resolution</b>. 720p is the most reliable for most USB microscopes.</li>
+      <li>Close the microscope's own app and any other video apps.</li></ol>`;
+  } else if (lastError){
+    html=`<strong>${escapeHtml(lastError)}</strong>`;
+  } else if (camCount===0){
+    html=`<strong>No cameras visible to the browser.</strong>
+      <ol><li>Plug the microscope straight into the Mac (use an adapter, not a hub), then click <b>Refresh</b>.</li>
+      <li>Check the Mac itself sees it: Apple menu → About This Mac → More Info → System Report → <b>Camera</b> (or USB).</li>
+      <li>If it's a Wi-Fi microscope that uses a phone app, it isn't a USB camera, so browsers can't see it.</li></ol>`;
+  }
+  $("#diagAlert").innerHTML=html; $("#diagAlert").hidden=!html;
+}
+$("#refreshBtn").addEventListener("click", async ()=>{ await listDevices(); if (camCount>0 && !S.stream) startCamera(); });
+
+/* ---------- Keyboard ---------- */
+document.addEventListener("keydown", e=>{
+  if (e.target.closest("input,select,textarea") || e.metaKey || e.ctrlKey) return;
+  if (!$("#calDialog").hidden){ if(e.key==="Escape") $("#calDialog").hidden=true; return; }
+  const k=e.key.toLowerCase();
+  if (k===" "){ e.preventDefault(); snap(); }
+  else if (k==="f" && e.shiftKey) toggleFullscreen();
+  else if (k==="f") toggleFreeze();
+  else if (k==="r") toggleRec();
+  else if (k==="m") setTool("measure");
+  else if (k==="c") setTool("calibrate");
+  else if (k==="v") setTool("pan");
+  else if (k==="0") resetView();
+  else if (k==="=" || k==="+") zoomAt(S.zoom*1.25);
+  else if (k==="-") zoomAt(S.zoom/1.25);
+  else if (k==="escape"){ S.draft=null; setTool("pan"); }
+  else if ((k==="backspace"||k==="delete") && S.measures.length){ S.measures.pop(); renderMeasures(); }
+});
+
+/* ---------- Boot ---------- */
+resize(); renderProfiles(); renderMeasures(); renderGallery(); syncZoomUI(); renderDiag();
+requestAnimationFrame(loop);
+// Reconnect on load if a camera worked last time.
+listDevices().then(()=>{ if (store.get("autoConnect",false) && camCount>0 && !S.stream) startCamera(); });
+if (navigator.permissions && navigator.permissions.query){
+  navigator.permissions.query({name:"camera"}).then(p=>{
+    camPerm=p.state==="prompt"?"unknown":p.state; renderDiag();
+    p.onchange=()=>{ camPerm=p.state==="prompt"?"unknown":p.state; renderDiag(); };
+  }).catch(()=>{});
+}
+})();
+</script>
+</body>
+</html>
