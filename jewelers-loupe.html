@@ -119,6 +119,8 @@ input[type=range]{width:100%;accent-color:var(--brass)}
 .gitem a{color:var(--brass);font-size:12px;text-decoration:none}
 .gitem a:hover{text-decoration:underline}
 
+.meter{height:6px;border-radius:3px;background:var(--raise);overflow:hidden}
+.meter div{height:100%;width:0;background:var(--ok)}
 .diag{list-style:none;margin:0;padding:0;display:grid;gap:5px}
 .diag li{display:grid;grid-template-columns:14px 1fr auto;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)}
 .diag li b{font:500 12px var(--mono);color:var(--fg);text-align:right}
@@ -219,6 +221,20 @@ input[type=range]{width:100%;accent-color:var(--brass)}
       <label class="check"><input type="checkbox" id="optClean"> Clean view for streaming (hide labels &amp; toolbar)</label>
       <label class="check"><input type="checkbox" id="optOverlay" checked> Burn measurements &amp; scale bar into photos</label>
       <label class="check"><input type="checkbox" id="optAutosave"> Save each photo to Downloads automatically</label>
+    </div>
+
+    <div class="sec">
+      <h2>Audio</h2>
+      <div class="inline">
+        <select id="micSel" aria-label="Microphone"><option value="off">Off · video only</option></select>
+      </div>
+      <div class="meter" aria-hidden="true"><div id="micLevel"></div></div>
+      <div class="slider"><label for="micGain">Mic level</label><input type="range" id="micGain" min="0" max="300" value="100"><span id="micGainV">100%</span></div>
+      <div class="grid2">
+        <label class="check"><input type="checkbox" id="micMute"> Mute</label>
+        <label class="check"><input type="checkbox" id="micClean" checked> Reduce background noise</label>
+      </div>
+      <p class="hint" id="micHint">Choose a microphone to include sound in recordings. A USB or lapel mic sounds far better than the laptop's built-in one.</p>
     </div>
 
     <div class="sec">
@@ -463,7 +479,7 @@ function hudTick(){
   if (s.kind==="live") html+=`<span class="tag">LIVE</span>`;
   if (s.kind==="frozen") html+=`<span class="tag frozen">FROZEN</span>`;
   if (S.rec){ const t=Math.floor((performance.now()-S.recStart)/1000);
-    html+=`<span class="tag rec">● REC ${String(Math.floor(t/60)).padStart(2,"0")}:${String(t%60).padStart(2,"0")}</span>`; }
+    html+=`<span class="tag rec">● REC ${String(Math.floor(t/60)).padStart(2,"0")}:${String(t%60).padStart(2,"0")}${S.recAudio?" · with sound":" · no sound"}</span>`; }
   const p=activeProfile(); if (p) html+=`<span class="tag">${escapeHtml(S.cal.active)}</span>`;
   if (html!==lastHud){ $("#hudTL").innerHTML=html; lastHud=html; }
   const fps = s.kind==="live" ? realFps : 0;
@@ -660,9 +676,17 @@ $("#snapBtn").addEventListener("click", snap);
 function toggleRec(){
   if (S.rec){ S.rec.stop(); return; }
   if (!window.MediaRecorder || !stage.captureStream){ setStatus("This browser can't record video", "err"); return; }
-  const types=["video/mp4;codecs=avc1.640028","video/mp4;codecs=avc1","video/mp4","video/webm;codecs=vp9","video/webm"];
+  const out=stage.captureStream(30);
+  const aTrack = A.dest && A.stream ? A.dest.stream.getAudioTracks()[0] : null;
+  if (aTrack){ if (A.ctx.state!=="running") A.ctx.resume().catch(()=>{}); out.addTrack(aTrack); }
+  S.recAudio=!!aTrack;
+  const types = aTrack
+    ? ["video/mp4;codecs=avc1.640028,mp4a.40.2","video/mp4;codecs=avc1,mp4a.40.2","video/mp4","video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm"]
+    : ["video/mp4;codecs=avc1.640028","video/mp4;codecs=avc1","video/mp4","video/webm;codecs=vp9","video/webm"];
   const type=types.find(t=>MediaRecorder.isTypeSupported(t))||"";
-  const rec=new MediaRecorder(stage.captureStream(30), type?{mimeType:type, videoBitsPerSecond:16e6}:{});
+  const opts={videoBitsPerSecond:16e6}; if (aTrack) opts.audioBitsPerSecond=192000; if (type) opts.mimeType=type;
+  let rec;
+  try{ rec=new MediaRecorder(out, opts); }catch(e){ rec=new MediaRecorder(out); }
   const chunks=[];
   rec.ondataavailable=e=>{ if(e.data.size) chunks.push(e.data); };
   rec.onstop=()=>{
@@ -674,6 +698,75 @@ function toggleRec(){
   $("#recBtn").classList.add("rec-on"); $("#recBtn").firstChild.textContent="Stop ";
 }
 $("#recBtn").addEventListener("click", toggleRec);
+
+/* ---------- Microphone ---------- */
+// mic → gain → (analyser for the meter) → recording destination. Never routed to the speakers, so no feedback.
+const A={ ctx:null, stream:null, src:null, gain:null, an:null, dest:null, id: store.get("micId","off"),
+          vol: store.get("micVol",100), mute:false, clean: store.get("micClean",true), err:"" };
+function ensureAudioGraph(){
+  if (A.ctx) return;
+  const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return;
+  A.ctx=new AC(); A.gain=A.ctx.createGain(); A.an=A.ctx.createAnalyser(); A.an.fftSize=1024;
+  A.dest=A.ctx.createMediaStreamDestination();
+  A.gain.connect(A.an); A.gain.connect(A.dest); applyGain();
+}
+function applyGain(){ if (A.gain) A.gain.gain.value = A.mute ? 0 : A.vol/100; }
+function stopMic(){ if (A.src){ try{A.src.disconnect();}catch(e){} A.src=null; } if (A.stream){ A.stream.getTracks().forEach(t=>t.stop()); A.stream=null; } }
+async function startMic(){
+  stopMic(); A.err="";
+  if (A.id==="off"){ updateMicHint(); renderDiag(); return; }
+  if (!ENV.media){ A.err="Microphone isn't available in this window."; updateMicHint(); renderDiag(); return; }
+  const c={echoCancellation:A.clean, noiseSuppression:A.clean, autoGainControl:false, channelCount:{ideal:2}};
+  try{
+    A.stream=await navigator.mediaDevices.getUserMedia({video:false, audio: A.id ? {...c, deviceId:{exact:A.id}} : c});
+  }catch(e){
+    if (e.name==="OverconstrainedError"||e.name==="NotFoundError"){
+      try{ A.stream=await navigator.mediaDevices.getUserMedia({video:false, audio:c}); }catch(e2){ e=e2; }
+    }
+    if (!A.stream){
+      A.err = e.name==="NotAllowedError" ? "Microphone permission is blocked. Click the camera/mic icon in Chrome's address bar and allow it, and check System Settings → Privacy & Security → Microphone → Google Chrome."
+            : e.name==="NotReadableError" ? "That microphone is in use by another app. Quit it and choose the mic again."
+            : "Couldn't start that microphone ("+e.name+").";
+      updateMicHint(); renderDiag(); return;
+    }
+  }
+  ensureAudioGraph(); if (A.ctx.state!=="running") A.ctx.resume().catch(()=>{});
+  A.src=A.ctx.createMediaStreamSource(A.stream); A.src.connect(A.gain);
+  const t=A.stream.getAudioTracks()[0];
+  t.addEventListener("ended",()=>{ stopMic(); A.err="The microphone was disconnected."; updateMicHint(); renderDiag(); });
+  await listMics(); updateMicHint(); renderDiag();
+}
+async function listMics(){
+  const sel=$("#micSel"); let devs=[];
+  try{ devs=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==="audioinput" && d.deviceId!=="communications"); }catch(e){}
+  sel.innerHTML=""; sel.add(new Option("Off · video only","off"));
+  devs.forEach((d,i)=>sel.add(new Option(d.deviceId==="default" ? `System default${d.label?" · "+d.label.replace(/^Default - /,""):""}` : (d.label||`Microphone ${i+1}`), d.deviceId)));
+  sel.value = [...sel.options].some(o=>o.value===A.id) ? A.id : (A.id==="off"?"off":sel.options[1]?.value||"off");
+}
+function updateMicHint(){
+  const h=$("#micHint");
+  if (A.err){ h.textContent=A.err; h.style.color="var(--rec)"; return; }
+  h.style.color="";
+  h.textContent = A.stream ? `Recording will include sound from ${(A.stream.getAudioTracks()[0].label||"this mic")}. Watch the meter: aim for green, with occasional yellow.`
+    : "Choose a microphone to include sound in recordings. A USB or lapel mic sounds far better than the laptop's built-in one.";
+}
+const lvl=$("#micLevel"), buf=new Float32Array(1024);
+(function meter(){
+  let v=0;
+  if (A.an && A.stream){ A.an.getFloatTimeDomainData(buf); let pk=0; for(let i=0;i<buf.length;i++){ const a=Math.abs(buf[i]); if(a>pk) pk=a; } v=pk; }
+  const pct=Math.min(100, v*100);
+  lvl.style.width=pct+"%";
+  lvl.style.background = v>0.9 ? "var(--rec)" : v>0.6 ? "var(--brass)" : "var(--ok)";
+  requestAnimationFrame(meter);
+})();
+$("#micSel").addEventListener("change",e=>{ A.id=e.target.value; store.set("micId",A.id); startMic(); });
+$("#micGain").value=A.vol; $("#micGainV").textContent=A.vol+"%";
+$("#micGain").addEventListener("input",e=>{ A.vol=+e.target.value; $("#micGainV").textContent=A.vol+"%"; store.set("micVol",A.vol); applyGain(); });
+$("#micMute").addEventListener("change",e=>{ A.mute=e.target.checked; applyGain(); });
+$("#micClean").checked=A.clean;
+$("#micClean").addEventListener("change",e=>{ A.clean=e.target.checked; store.set("micClean",A.clean); if (A.stream) startMic(); });
+// Browsers start audio only after a click; resume on the first one.
+document.addEventListener("pointerdown",()=>{ if (A.ctx && A.ctx.state!=="running") A.ctx.resume().catch(()=>{}); });
 
 /* ---------- Session gallery ---------- */
 function download(item){
@@ -767,7 +860,7 @@ $("#camSel").addEventListener("change", e=>{ S.deviceId=e.target.value; store.se
 $("#resSel").value=S.res;
 $("#resSel").addEventListener("change", e=>{ S.res=e.target.value; store.set("res",S.res); if(S.stream) startCamera(); });
 if (navigator.mediaDevices && navigator.mediaDevices.addEventListener){
-  navigator.mediaDevices.addEventListener("devicechange", listDevices);
+  navigator.mediaDevices.addEventListener("devicechange", ()=>{ listDevices(); listMics(); });
 }
 
 /* ---------- Hardware controls (whatever the camera exposes) ---------- */
@@ -865,6 +958,7 @@ function renderDiag(){
     ["Opened as", ENV.framed ? "embedded preview" : ENV.file ? "local file" : location.protocol.replace(":",""), !ENV.framed],
     ["Camera access", ENV.media ? (camPerm==="granted"?"allowed":camPerm==="denied"?"blocked":"not asked yet") : "unavailable", ENV.media && camPerm!=="denied"],
     ["Cameras found", camCount==null ? "…" : String(camCount), camCount==null ? null : camCount>0],
+    ["Microphone", A.id==="off" ? "off" : A.stream ? "on" : A.err ? "problem" : "starting…", A.id==="off" ? null : A.stream ? true : A.err ? false : null],
     ["Settings saving", store.ok ? "working" : "blocked", store.ok]
   ];
   if (picState) rows.splice(4,0,["Picture", picLabel, picState==="ok" ? true : picState==="checking" ? null : false]);
@@ -931,6 +1025,8 @@ document.addEventListener("keydown", e=>{
 /* ---------- Boot ---------- */
 resize(); renderProfiles(); renderMeasures(); renderGallery(); syncZoomUI(); renderDiag();
 requestAnimationFrame(loop);
+// Restore the chosen microphone (Chrome remembers the permission for this file).
+if (A.id!=="off") startMic(); else listMics();
 // Reconnect on load if a camera worked last time.
 listDevices().then(()=>{ if (store.get("autoConnect",false) && camCount>0 && !S.stream) startCamera(); });
 if (navigator.permissions && navigator.permissions.query){
