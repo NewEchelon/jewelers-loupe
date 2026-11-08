@@ -91,6 +91,8 @@ input[type=range]{width:100%;accent-color:var(--brass)}
 .check{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);cursor:pointer}
 .check input{accent-color:var(--brass)}
 .hint{margin:0;font-size:12.5px;color:var(--muted)}
+.estimate{font:12.5px var(--mono);color:var(--fg);background:var(--raise);border-radius:6px;padding:7px 10px;font-variant-numeric:tabular-nums}
+.estimate i{font-style:normal;color:var(--muted)}
 .progress{height:6px;border-radius:3px;background:var(--raise);overflow:hidden}
 .progress div{height:100%;width:0;background:var(--brass)}
 .logo-prev{display:flex;align-items:center;gap:8px}
@@ -224,6 +226,13 @@ input[type=range]{width:100%;accent-color:var(--brass)}
       <h2>Export</h2>
       <div class="field"><label for="outSize">Size</label>
         <select id="outSize"><option value="0">Original</option><option value="1920" selected>1080p</option><option value="1280">720p</option></select></div>
+      <div class="field"><label for="outQ">Quality</label>
+        <select id="outQ">
+          <option value="high">High · archive &amp; re-editing</option>
+          <option value="standard" selected>Standard · Facebook &amp; Instagram</option>
+          <option value="small">Small · email &amp; text messages</option>
+        </select></div>
+      <div class="estimate" id="estimate"></div>
       <div class="grid2">
         <button class="btn" id="frameBtn" title="S">Save frame <kbd>S</kbd></button>
         <button class="btn primary" id="exportBtn">Export clip</button>
@@ -433,9 +442,9 @@ function syncUI(){
   $("#clipSec").hidden=!vid;
   $("#exportBtn").textContent = vid ? "Export clip" : "Export photo";
   $("#exportHint").textContent = vid ? "Export plays the trimmed section once and records it with your edits and sound. Keep this window visible while it runs."
-    : "Saves the photo with your crop, adjustments, caption and logo as a full-resolution PNG.";
+    : "Saves the photo at full resolution with your crop, adjustments, caption and logo. Quality picks PNG (High) or JPEG (Standard, Small).";
   $("#frameBtn").hidden=!vid;
-  updateTime(); layoutOut();
+  updateTime(); updateEstimate(); layoutOut();
 }
 const ed=(k,v)=>{ if(cur){ cur.e[k]=v; } };
 document.querySelectorAll("#aspect button").forEach(b=>b.addEventListener("click",()=>{ ed("aspect",b.dataset.a); ed("panX",0); ed("panY",0); syncUI(); }));
@@ -471,8 +480,38 @@ $("#logoClear").addEventListener("click",()=>{ G.logo.src=""; logoImg.removeAttr
 $("#logoPos").addEventListener("change",e=>{ G.logo.pos=e.target.value; saveLogo(); });
 $("#logoSize").addEventListener("input",e=>{ G.logo.size=+e.target.value; $("#logoSizeV").textContent=e.target.value+"%"; saveLogo(); });
 $("#logoOp").addEventListener("input",e=>{ G.logo.op=+e.target.value; $("#logoOpV").textContent=e.target.value+"%"; saveLogo(); });
+/* ---------- Quality / compression ---------- */
+// Target bitrates at 1080p; other sizes scale with pixel count.
+const QUALITY = {
+  high:     {v1080:16e6,  audio:192000, still:"png"},
+  standard: {v1080:6e6,   audio:128000, still:"jpeg", jq:0.92},
+  small:    {v1080:2.5e6, audio:96000,  still:"jpeg", jq:0.8}
+};
+G.q = store.get("q","standard"); if (!QUALITY[G.q]) G.q="standard";
+function bitrates(W,H){ const Q=QUALITY[G.q], k=Math.pow((W*H)/(1920*1080),0.75);
+  return { v: Math.round(Math.max(0.6e6, Q.v1080*k)), a: Q.audio }; }
+const fmtMB = b => b>=1e9 ? (b/1e9).toFixed(1)+" GB" : b>=1e7 ? Math.round(b/1e6)+" MB" : (b/1e6).toFixed(1)+" MB";
+let lastEst="";
+function updateEstimate(){
+  if (!cur) return;
+  let html;
+  if (cur.kind==="video"){
+    const v=cur.el, d=isFinite(v.duration)?v.duration:0, e=cur.e, len=Math.max(0,((e.outT??d)-e.inT)/(e.outSpeed||1));
+    const {W,H}=outDims(cur,G.outSize), br=bitrates(W,H), bytes=(br.v+br.a)*len/8;
+    html = `Up to about <b>${fmtMB(bytes)}</b> <i>· ${W}×${H} · ${(br.v/1e6).toFixed(1)} Mbps · ${fmt(len)}</i>`;
+  } else {
+    const {W,H}=outDims(cur,0), Q=QUALITY[G.q];
+    html = `${Q.still==="png"?"PNG, full quality":"JPEG, "+Math.round(Q.jq*100)+"% quality"} <i>· ${W}×${H}</i>`;
+  }
+  if (html!==lastEst){ $("#estimate").innerHTML=html; lastEst=html; }
+}
+function stillBlob(c, cb){ const Q=QUALITY[G.q];
+  Q.still==="png" ? c.toBlob(cb,"image/png") : c.toBlob(cb,"image/jpeg",Q.jq); }
+const stillExt = () => QUALITY[G.q].still==="png" ? "png" : "jpg";
+$("#outQ").value=G.q;
+$("#outQ").addEventListener("change",e=>{ G.q=e.target.value; store.set("q",G.q); updateEstimate(); });
 $("#outSize").value=String(G.outSize);
-$("#outSize").addEventListener("change",e=>{ G.outSize=+e.target.value; store.set("outSize",G.outSize); });
+$("#outSize").addEventListener("change",e=>{ G.outSize=+e.target.value; store.set("outSize",G.outSize); updateEstimate(); });
 
 /* ---------- Pan & zoom on the preview ---------- */
 let drag=null;
@@ -496,6 +535,7 @@ $("#speed").addEventListener("change",e=>{ const v=vid(); if(v){ v.playbackRate=
 $("#loopBtn").addEventListener("click",()=>{ G.loop=!G.loop; $("#loopBtn").classList.toggle("on",G.loop); });
 $("#vol").value=G.vol; $("#vol").addEventListener("input",e=>{ G.vol=+e.target.value; store.set("vol",G.vol); setSpk(); });
 function updateTime(){
+  updateEstimate();
   const v=vid(); if(!v) return;
   const d=isFinite(v.duration)?v.duration:0, e=cur.e, outT=e.outT??d;
   $("#playBtn").textContent = v.paused ? "▶ Play" : "❚❚ Pause";
@@ -552,9 +592,9 @@ $("#frameBtn").addEventListener("click",saveFrame);
 function saveFrame(){ if(!cur||exporting) return; const v=vid();
   const {W,H}=outDims(cur,0); const c=document.createElement("canvas"); c.width=W; c.height=H;
   draw(c.getContext("2d"),W,H,cur, v ? null : null); // no fade on stills
-  c.toBlob(b=>b&&download(b,`${baseName(cur.name)}_frame_${v?fmt(v.currentTime).replace(/[:.]/g,"-"):""}.png`),"image/png"); flashNote("Frame saved to Downloads"); }
+  stillBlob(c, b=>b&&download(b,`${baseName(cur.name)}_frame_${v?fmt(v.currentTime).replace(/[:.]/g,"-"):""}.${stillExt()}`)); flashNote("Frame saved to Downloads"); }
 $("#exportBtn").addEventListener("click",()=>{ if(!cur) return; if (exporting){ exporting.cancel(); return; } cur.kind==="video" ? exportClip(cur) : exportPhoto(cur); });
-function exportPhoto(it){ const c=renderStill(it,null); c.toBlob(b=>b&&download(b,`${baseName(it.name)}_edit.png`),"image/png"); flashNote("Photo saved to Downloads"); }
+function exportPhoto(it){ const c=renderStill(it,null); stillBlob(c, b=>b&&download(b,`${baseName(it.name)}_edit.${stillExt()}`)); flashNote("Photo saved to Downloads"); }
 function flashNote(t){ const n=$("#note"); n.textContent=t; n.hidden=false; clearTimeout(flashNote.t); flashNote.t=setTimeout(()=>n.hidden=true,2500); }
 
 async function exportClip(it){
@@ -569,7 +609,8 @@ async function exportClip(it){
   const types = hasAudio ? ["video/mp4;codecs=avc1.640028,mp4a.40.2","video/mp4;codecs=avc1,mp4a.40.2","video/mp4","video/webm;codecs=vp9,opus","video/webm"]
                          : ["video/mp4;codecs=avc1.640028","video/mp4","video/webm;codecs=vp9","video/webm"];
   const type=types.find(t=>MediaRecorder.isTypeSupported(t))||"";
-  const opts={videoBitsPerSecond: W*H>2e6?20e6:12e6, audioBitsPerSecond:192000}; if(type) opts.mimeType=type;
+  const br=bitrates(W,H);
+  const opts={videoBitsPerSecond:br.v, audioBitsPerSecond:br.a}; if(type) opts.mimeType=type;
   let rec; try{ rec=new MediaRecorder(stream,opts); }catch(err){ rec=new MediaRecorder(stream); }
   const chunks=[]; rec.ondataavailable=ev=>{ if(ev.data.size) chunks.push(ev.data); };
   let cancelled=false, finished=false;
@@ -589,11 +630,16 @@ async function exportClip(it){
     $("#progBar").style.width=Math.min(100,(t-e.inT)/span*100)+"%";
     // mirror into the preview so you can watch it
     layoutOut(); octx.drawImage(c,0,0,out.width,out.height);
-    if (t>=outT-0.005 || v.ended){ stop(); return; }
+    if (t>=outT-1/(it.fps||30)*0.5 || v.ended){ stop(); return; }
     v.requestVideoFrameCallback ? v.requestVideoFrameCallback(frame) : requestAnimationFrame(frame);
   };
+  // The last frame often ends just short of the reported length, so also stop on "ended" and on a stalled clock.
+  const onEnded=()=>stop(); v.addEventListener("ended",onEnded,{once:true});
+  let lastT=-1, still=0;
+  const guard=setInterval(()=>{ if (finished){ clearInterval(guard); return; }
+    if (v.currentTime===lastT && !v.seeking){ if (++still>=3) stop(); } else still=0; lastT=v.currentTime; },500);
   function stop(){
-    if (finished) return; finished=true; v.pause();
+    if (finished) return; finished=true; v.pause(); clearInterval(guard); v.removeEventListener("ended",onEnded);
     draw(g,W,H,it,outT); // final black frame of the fade
     setTimeout(()=>{ try{ rec.stop(); }catch(err){} },120);
   }
