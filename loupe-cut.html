@@ -102,6 +102,10 @@ input[type=range]{width:100%;accent-color:var(--brass)}
 .seg2 button{border:1px solid var(--line);background:var(--raise);border-radius:6px;padding:6px 4px;cursor:pointer;font-size:12.5px}
 .seg2 button[aria-pressed=true]{border-color:var(--brass);color:var(--brass)}
 .hint.tight{font-size:12px;line-height:1.4}
+.musname{display:flex;justify-content:space-between;gap:8px;font:12px var(--mono);color:var(--fg);min-width:0}
+.musname span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.musname i{font-style:normal;color:var(--muted);flex:none}
+#muteBtn[aria-pressed=true]{border-color:var(--rec);color:var(--rec)}
 .progress{height:6px;border-radius:3px;background:var(--raise);overflow:hidden}
 .progress div{height:100%;width:0;background:var(--brass)}
 .logo-prev{display:flex;align-items:center;gap:8px}
@@ -155,8 +159,8 @@ input[type=range]{width:100%;accent-color:var(--brass)}
         <option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option><option value="4">4×</option>
       </select>
       <button class="btn small" id="loopBtn" title="L">Loop trim</button>
-      <label for="vol">Vol</label>
-      <input type="range" id="vol" min="0" max="100" value="80" style="width:80px">
+      <button class="btn small" id="muteBtn" title="Mute playback (M)" aria-pressed="false">🔊</button>
+      <input type="range" id="vol" min="0" max="100" value="80" style="width:80px" aria-label="Playback volume">
     </div>
 
     <div class="timeline">
@@ -226,9 +230,23 @@ input[type=range]{width:100%;accent-color:var(--brass)}
       <h2>Clip</h2>
       <div class="slider"><label for="fadeIn">Fade in</label><input type="range" id="fadeIn" min="0" max="3" step="0.25" value="0.5"><span id="fadeInV">0.5 s</span></div>
       <div class="slider"><label for="fadeOut">Fade out</label><input type="range" id="fadeOut" min="0" max="3" step="0.25" value="0.5"><span id="fadeOutV">0.5 s</span></div>
-      <div class="slider"><label for="clipVol">Sound</label><input type="range" id="clipVol" min="0" max="200" value="100"><span id="clipVolV">100%</span></div>
+      <label class="check"><input type="checkbox" id="clipSound" checked> Include clip sound</label>
+      <div class="slider"><label for="clipVol">Clip sound</label><input type="range" id="clipVol" min="0" max="200" value="100"><span id="clipVolV">100%</span></div>
       <div class="field"><label for="outSpeed">Export speed</label>
         <select id="outSpeed"><option value="0.5">0.5× slow-mo</option><option value="1" selected>1× normal</option><option value="2">2× fast</option></select></div>
+    </div>
+
+    <div class="sec" id="musicSec">
+      <h2>Music <button class="btn small ghost" id="musRemove" hidden>Remove</button></h2>
+      <button class="btn" id="musAdd">Add music…</button>
+      <input type="file" id="musFile" accept="audio/*,.mp3,.m4a,.aac,.wav,.aif,.aiff,.flac,.ogg" hidden>
+      <div id="musCtl" style="display:grid;gap:10px" hidden>
+        <div class="musname"><span id="musName"></span><i id="musDur"></i></div>
+        <div class="slider"><label for="musLevel">Music level</label><input type="range" id="musLevel" min="0" max="150" value="60"><span id="musLevelV">60%</span></div>
+        <div class="slider"><label for="musStart">Start song at</label><input type="range" id="musStart" min="0" max="60" step="0.5" value="0"><span id="musStartV">0:00</span></div>
+        <label class="check"><input type="checkbox" id="musLoop" checked> Loop if the clip is longer than the song</label>
+      </div>
+      <p class="hint" id="musHint">Lay a song under the clip. It fades in and out with the clip, and plays during preview so you hear the mix. Facebook and Instagram may mute songs you don't have the rights to.</p>
     </div>
 
     <div class="sec">
@@ -356,7 +374,7 @@ const FILTER_OK="filter" in octx;
 
 /* ---------- State ---------- */
 const defaults = () => ({ aspect:"orig", zoom:1, panX:0, panY:0, rot:0, flipH:false,
-  b:100, c:100, s:100, w:0, fadeIn:0.5, fadeOut:0.5, vol:100, outSpeed:1, inT:0, outT:null });
+  b:100, c:100, s:100, w:0, fadeIn:0.5, fadeOut:0.5, vol:100, sound:true, outSpeed:1, inT:0, outT:null });
 const G = { // shared across files, remembered
   cap: store.get("cap", {text:"", pos:"bottom", size:4.5, band:true}),
   logo: store.get("logo", {src:"", pos:"br", size:16, op:85}),
@@ -456,17 +474,89 @@ function tick(){
       const e=cur.e, el=cur.el, outT=e.outT??el.duration;
       if (!el.paused && el.currentTime>=outT-0.01){ if (G.loop){ el.currentTime=e.inT; } else { el.pause(); } }
       if (cur.audio) cur.audio.clip.gain.value = fadeGain(cur, el.currentTime);
+      musicSync(cur);
       updateTime();
     }
   }
   requestAnimationFrame(tick);
 }
-function fadeGain(it,t){
-  const e=it.e, outT=e.outT??it.el.duration; let g=e.vol/100;
+// Fade envelope (0–1) at source time t
+function fadeEnv(it,t){
+  const e=it.e, outT=e.outT??it.el.duration; let g=1;
+  if (t<e.inT-0.01 || t>outT+0.01) return 0;
   if (e.fadeIn>0 && t<e.inT+e.fadeIn) g*=Math.max(0,(t-e.inT)/e.fadeIn);
   if (e.fadeOut>0 && t>outT-e.fadeOut) g*=Math.max(0,(outT-t)/e.fadeOut);
   return g;
 }
+function fadeGain(it,t){
+  const e=it.e, outT=e.outT??it.el.duration; let g = e.sound===false ? 0 : e.vol/100;
+  if (e.fadeIn>0 && t<e.inT+e.fadeIn) g*=Math.max(0,(t-e.inT)/e.fadeIn);
+  if (e.fadeOut>0 && t>outT-e.fadeOut) g*=Math.max(0,(outT-t)/e.fadeOut);
+  return g;
+}
+
+/* ---------- Music ---------- */
+const MUS = { file:null, name:"", dur:0, el:null, src:null, gain:null, spk:null, buf:null,
+  level: store.get("musLevel",60), start:0, loop: store.get("musLoop",true) };
+function musicGraph(){
+  if (MUS.gain || !MUS.el) return;
+  if (!AC){ const C=window.AudioContext||window.webkitAudioContext; if(!C) return; AC=new C(); }
+  MUS.src=AC.createMediaElementSource(MUS.el); MUS.gain=AC.createGain(); MUS.spk=AC.createGain();
+  MUS.src.connect(MUS.gain); MUS.gain.connect(MUS.spk); MUS.spk.connect(AC.destination); setSpk();
+}
+// Song position for a source-video time t (follows trim start and export speed).
+function musicTimeAt(it,t){
+  const e=it.e; let m=MUS.start + (t-e.inT)/(e.outSpeed||1);
+  if (MUS.loop && MUS.dur>0) m = ((m % MUS.dur) + MUS.dur) % MUS.dur;
+  return m;
+}
+function musicSync(it){
+  if (!MUS.el) return;
+  const v=it.el, e=it.e, t=v.currentTime, outT=e.outT??v.duration;
+  const m=musicTimeAt(it,t);
+  const active = !v.paused && t>=e.inT-0.01 && t<=outT && (MUS.loop || m<MUS.dur);
+  if (!active){ if (!MUS.el.paused) MUS.el.pause(); return; }
+  musicGraph(); if (AC.state!=="running") AC.resume().catch(()=>{});
+  const rate=Math.min(16,Math.max(0.0625, v.playbackRate/(e.outSpeed||1)));
+  if (Math.abs(MUS.el.playbackRate-rate)>0.001) MUS.el.playbackRate=rate;
+  if (MUS.el.paused){ MUS.el.currentTime=m; MUS.el.play().catch(()=>{}); }
+  else if (Math.abs(MUS.el.currentTime-m)>0.25) MUS.el.currentTime=m;
+  if (MUS.gain) MUS.gain.gain.value = MUS.level/100 * fadeEnv(it,t);
+}
+function syncMusicUI(){
+  const has=!!MUS.el;
+  $("#musCtl").hidden=!has; $("#musRemove").hidden=!has; $("#musAdd").textContent = has ? "Replace music…" : "Add music…";
+  if (!has) return;
+  $("#musName").textContent=MUS.name; $("#musName").title=MUS.name; $("#musDur").textContent=fmt(MUS.dur).replace(/\.\d+$/,"");
+  $("#musLevel").value=MUS.level; $("#musLevelV").textContent=MUS.level+"%";
+  $("#musStart").max=Math.max(0.5,Math.floor(MUS.dur)); $("#musStart").value=MUS.start; $("#musStartV").textContent=fmt(MUS.start).replace(/\.\d+$/,"");
+  $("#musLoop").checked=MUS.loop;
+}
+$("#musAdd").addEventListener("click",()=>$("#musFile").click());
+$("#musFile").addEventListener("change",e=>{
+  const f=e.target.files[0]; e.target.value=""; if(!f) return;
+  const a=new Audio(); a.preload="auto"; a.src=URL.createObjectURL(f);
+  a.addEventListener("loadedmetadata",()=>{
+    if (MUS.el){ MUS.el.pause(); try{ MUS.src.disconnect(); }catch(err){} URL.revokeObjectURL(MUS.el.src); }
+    Object.assign(MUS,{file:f, name:f.name, dur:a.duration||0, el:a, src:null, gain:null, spk:null, buf:null, start:0});
+    $("#musHint").style.color=""; syncMusicUI(); updateEstimate(); if (typeof syncAdv==="function") syncAdv();
+  },{once:true});
+  a.addEventListener("error",()=>{ $("#musHint").style.color="var(--rec)";
+    $("#musHint").textContent="That file couldn't be played. Try an MP3, M4A or WAV. Songs bought from Apple Music are copy-protected and won't open."; },{once:true});
+});
+$("#musRemove").addEventListener("click",()=>{ if (MUS.el){ MUS.el.pause(); try{ MUS.src&&MUS.src.disconnect(); }catch(err){} }
+  Object.assign(MUS,{file:null,name:"",dur:0,el:null,src:null,gain:null,spk:null,buf:null}); syncMusicUI(); updateEstimate(); if (typeof syncAdv==="function") syncAdv(); });
+$("#musLevel").addEventListener("input",e=>{ MUS.level=+e.target.value; $("#musLevelV").textContent=MUS.level+"%"; store.set("musLevel",MUS.level); });
+$("#musStart").addEventListener("input",e=>{ MUS.start=+e.target.value; $("#musStartV").textContent=fmt(MUS.start).replace(/\.\d+$/,""); });
+$("#musLoop").addEventListener("change",e=>{ MUS.loop=e.target.checked; store.set("musLoop",MUS.loop); });
+$("#clipSound").addEventListener("change",e=>{ if(cur){ cur.e.sound=e.target.checked; $("#clipVol").disabled=!e.target.checked; updateEstimate(); if (typeof syncAdv==="function") syncAdv(); } });
+async function musicBuffer(){
+  if (MUS.buf) return MUS.buf;
+  const C=window.OfflineAudioContext||window.webkitOfflineAudioContext;
+  MUS.buf = await new C(2,48000,48000).decodeAudioData(await MUS.file.arrayBuffer());
+  return MUS.buf;
+}
+const hasAnySound = it => (it.e.sound!==false) || !!MUS.el;
 
 /* ---------- Library ---------- */
 function addFiles(files){
@@ -536,6 +626,8 @@ function syncUI(){
   $("#fadeIn").value=e.fadeIn; $("#fadeInV").textContent=e.fadeIn+" s";
   $("#fadeOut").value=e.fadeOut; $("#fadeOutV").textContent=e.fadeOut+" s";
   $("#clipVol").value=e.vol; $("#clipVolV").textContent=e.vol+"%";
+  $("#clipSound").checked = e.sound!==false; $("#clipVol").disabled = e.sound===false;
+  $("#musicSec").hidden=!vid;
   $("#outSpeed").value=String(e.outSpeed);
   $("#transport").style.display = vid?"":"none";
   document.querySelector(".timeline").style.display = vid?"":"none";
@@ -599,7 +691,7 @@ function updateEstimate(){
   if (cur.kind==="video" && ADV.on && MB){ html=advEstimate(); }
   else if (cur.kind==="video"){
     const v=cur.el, d=isFinite(v.duration)?v.duration:0, e=cur.e, len=Math.max(0,((e.outT??d)-e.inT)/(e.outSpeed||1));
-    const {W,H}=outDims(cur,G.outSize), br=bitrates(W,H), bytes=(br.v+br.a)*len/8;
+    const {W,H}=outDims(cur,G.outSize), br=bitrates(W,H), bytes=(br.v+(hasAnySound(cur)?br.a:0))*len/8;
     html = `Up to about <b>${fmtMB(bytes)}</b> <i>· ${W}×${H} · ${(br.v/1e6).toFixed(1)} Mbps · ${fmt(len)}</i>`;
   } else {
     const {W,H}=outDims(cur,0), Q=QUALITY[G.q];
@@ -630,7 +722,9 @@ function togglePlay(){ const v=vid(); if(!v||exporting) return; audioFor(cur);
   const outT=cur.e.outT??v.duration;
   if (v.paused){ if (v.currentTime>=outT-0.02 || v.currentTime<cur.e.inT-0.02) v.currentTime=cur.e.inT; v.play().catch(()=>{}); } else v.pause(); }
 function step(n){ const v=vid(); if(!v||exporting) return; v.pause(); v.currentTime=Math.min(v.duration||0, Math.max(0, v.currentTime+n/(cur.fps||30))); }
-function setSpk(){ if (cur&&cur.audio) cur.audio.spk.gain.value=G.vol/100; }
+function setSpk(){ const g=G.muted?0:G.vol/100; if (cur&&cur.audio) cur.audio.spk.gain.value=g; if (MUS.spk) MUS.spk.gain.value=g;
+  $("#muteBtn").setAttribute("aria-pressed",String(!!G.muted)); $("#muteBtn").textContent=G.muted?"🔇":"🔊"; }
+$("#muteBtn").addEventListener("click",()=>{ G.muted=!G.muted; setSpk(); });
 $("#playBtn").addEventListener("click",togglePlay);
 $("#stepB").addEventListener("click",()=>step(-1)); $("#stepF").addEventListener("click",()=>step(1));
 $("#speed").addEventListener("change",e=>{ const v=vid(); if(v){ v.playbackRate=+e.target.value; v.preservesPitch=true; } });
@@ -709,7 +803,9 @@ async function exportClip(it){
   const c=document.createElement("canvas"); c.width=W; c.height=H; const g=c.getContext("2d");
   const stream=c.captureStream(30);
   const au=audioFor(it); let hasAudio=false;
-  if (au){ const tr=au.dest.stream.getAudioTracks()[0]; if (tr){ stream.addTrack(tr); hasAudio=true; } au.spk.gain.value=0; }
+  if (au && hasAnySound(it)){ const tr=au.dest.stream.getAudioTracks()[0]; if (tr){ stream.addTrack(tr); hasAudio=true; } }
+  if (au) au.spk.gain.value=0;
+  if (MUS.el && au){ musicGraph(); MUS.gain.connect(au.dest); MUS.spk.gain.value=0; }
   const types = hasAudio ? ["video/mp4;codecs=avc1.640028,mp4a.40.2","video/mp4;codecs=avc1,mp4a.40.2","video/mp4","video/webm;codecs=vp9,opus","video/webm"]
                          : ["video/mp4;codecs=avc1.640028","video/mp4","video/webm;codecs=vp9","video/webm"];
   const type=types.find(t=>MediaRecorder.isTypeSupported(t))||"";
@@ -731,6 +827,7 @@ async function exportClip(it){
     const t=v.currentTime;
     draw(g,W,H,it,t);
     if (au) au.clip.gain.value=fadeGain(it,t);
+    musicSync(it);
     $("#progBar").style.width=Math.min(100,(t-e.inT)/span*100)+"%";
     // mirror into the preview so you can watch it
     layoutOut(); octx.drawImage(c,0,0,out.width,out.height);
@@ -748,6 +845,7 @@ async function exportClip(it){
     setTimeout(()=>{ try{ rec.stop(); }catch(err){} },120);
   }
   rec.onstop=()=>{
+    if (MUS.el){ MUS.el.pause(); if (MUS.gain && au) try{ MUS.gain.disconnect(au.dest); }catch(err){} }
     ui(false); exporting=null; v.playbackRate=+$("#speed").value; setSpk();
     if (cancelled){ flashNote("Export cancelled"); return; }
     const mime=rec.mimeType||type||"video/webm", ext=mime.includes("mp4")?"mp4":"webm";
@@ -855,7 +953,7 @@ function syncAdv(){
   const notes=[];
   const q=SUP.quant[ADV.codec+key];
   if (ADV.rc==="cq" && q===false) notes.push(`Your Chrome can't do true constant quality with ${CODEC_INFO[ADV.codec].name}, so RF is turned into a matching bitrate instead.`);
-  if (cur && cur.kind==="video" && (cur.e.outSpeed||1)!==1 && ADV.ac!=="none") notes.push("Sound is left out when Export speed isn't 1×.");
+  if (cur && cur.kind==="video" && (cur.e.outSpeed||1)!==1 && ADV.ac!=="none" && cur.e.sound!==false) notes.push(`Clip sound is left out when Export speed isn't 1×${MUS.el?"; the music still plays":""}.`);
   if (SUP.video["hevc"+key]===false && ADV.cont!=="webm") notes.push("H.265 isn't available in this Chrome. Update Chrome, or use H.264.");
   $("#advSupport").textContent=notes.join(" "); $("#advSupport").hidden=!notes.length;
   updateEstimate();
@@ -890,7 +988,8 @@ $("#advDel").addEventListener("click",()=>{ ADV.mine=ADV.mine.filter(p=>p.id!==A
 function advEstimate(){
   const v=cur.el, d=isFinite(v.duration)?v.duration:0, e=cur.e, len=Math.max(0,((e.outT??d)-e.inT)/(e.outSpeed||1));
   const {W,H}=advDims(), info=`${W}×${H} · ${CODEC_INFO[ADV.codec].name} · ${fmt(len)}`;
-  const aud = ADV.ac==="none"||(e.outSpeed||1)!==1 ? 0 : ADV.ab*1000;
+  const clipAud = e.sound!==false && (e.outSpeed||1)===1;
+  const aud = ADV.ac==="none" || (!clipAud && !MUS.el) ? 0 : ADV.ab*1000;
   if (ADV.rc==="abr") return `Up to about <b>${fmtMB((ADV.br*1000+aud)*len/8)}</b> <i>· ${info}</i>`;
   // Constant quality: size depends on detail. Rough guide from RF using a bits-per-pixel curve.
   const eff={avc:1, hevc:0.6, vp9:0.65, av1:0.5, vp8:1.1}[ADV.codec]||1;
@@ -914,7 +1013,7 @@ async function exportAdvanced(it){
   try{
     const input=new MB.Input({source:new MB.BlobSource(it.file), formats:MB.ALL_FORMATS});
     const vt=await input.getPrimaryVideoTrack(); if(!vt) throw new Error("This file has no video track.");
-    const at=(ADV.ac!=="none" && speed===1) ? await input.getPrimaryAudioTrack() : null;
+    const at=(ADV.ac!=="none" && speed===1 && e.sound!==false) ? await input.getPrimaryAudioTrack() : null;
     const fmtObj = ADV.cont==="webm" ? new MB.WebMOutputFormat()
       : new (ADV.cont==="mov"?MB.MovOutputFormat:MB.Mp4OutputFormat)({fastStart: ADV.web ? "in-memory" : false});
     output=new MB.Output({format:fmtObj, target:new MB.BufferTarget()});
@@ -932,11 +1031,22 @@ async function exportAdvanced(it){
     const hwNote = hw===ADV.hw ? "" : ` Used the ${hw==="prefer-software"?"software":hw==="prefer-hardware"?"hardware":"automatic"} encoder because the ${ADV.hw==="prefer-hardware"?"hardware":"software"} one isn't available for ${CODEC_INFO[ADV.codec].name}.`;
     const vsrc=new MB.CanvasSource(c,{codec:ADV.codec, quality, keyFrameInterval:ADV.kf, hardwareAcceleration:hw, latencyMode:"quality"});
     output.addVideoTrack(vsrc, ADV.fps?{frameRate:ADV.fps}:{});
-    let asrc=null, audio=null;
-    if (at && SUP.audio[ADV.ac]!==false){
+    let asrc=null, audio=null, audioNote="";
+    if (ADV.ac!=="none" && (at || MUS.el)){
       hint.textContent="Preparing sound…";
-      audio = await renderAudio(at, inT, outT, e);
-      if (audio){ asrc=new MB.AudioBufferSource({codec:ADV.ac, quality:new MB.Quality({bitrate:ADV.ab*1000})}); output.addAudioTrack(asrc); }
+      audio = await renderAudio(at, inT, outT, e, speed);
+      if (audio){
+        const tryCodecs=[ADV.ac, ...CONTAINER_AUDIO[ADV.cont].filter(a=>a!==ADV.ac)];
+        const tryRates=[...new Set([ADV.ab, 128, 96])];
+        let pick=null;
+        outer: for (const ac of tryCodecs) for (const ab of tryRates){
+          if (await MB.canEncodeAudio(ac,{numberOfChannels:audio.numberOfChannels, sampleRate:audio.sampleRate, bitrate:ab*1000}).catch(()=>false)){ pick={ac,ab}; break outer; }
+        }
+        if (pick){
+          asrc=new MB.AudioBufferSource({codec:pick.ac, quality:new MB.Quality({bitrate:pick.ab*1000})}); output.addAudioTrack(asrc);
+          if (pick.ac!==ADV.ac || pick.ab!==ADV.ab) audioNote=` Sound saved as ${pick.ac.toUpperCase()} ${pick.ab} kbps because ${ADV.ac.toUpperCase()} ${ADV.ab} kbps isn't available here.`;
+        } else { audio=null; audioNote=" Saved without sound: no audio format this Chrome can write fits this file type."; }
+      }
     }
     await output.start();
 
@@ -983,7 +1093,7 @@ async function exportAdvanced(it){
     const blob=new Blob([output.target.buffer],{type:fmtObj.mimeType});
     download(blob, `${baseName(it.name)}_${ADV.codec}_${stamp()}${fmtObj.fileExtension}`);
     const secs=(performance.now()-t0)/1000;
-    hint.textContent=`Saved ${fmtMB(blob.size)} in ${secs<60?Math.round(secs)+" s":fmt(secs)} (${(outLen/secs).toFixed(1)}× real time).${hwNote}`;
+    hint.textContent=`Saved ${fmtMB(blob.size)} in ${secs<60?Math.round(secs)+" s":fmt(secs)} (${(outLen/secs).toFixed(1)}× real time).${hwNote}${audioNote}`;
     flashNote("Clip saved to Downloads");
   }catch(err){
     if (cancelled){ hint.textContent=hintWas; flashNote("Export cancelled"); }
@@ -995,18 +1105,32 @@ async function exportAdvanced(it){
   }
 }
 // Decode the trimmed sound, apply level and fades, and mix to the chosen channel count.
-async function renderAudio(at, inT, outT, e){
-  const sink=new MB.AudioBufferSink(at), parts=[];
-  for await (const wb of sink.buffers(Math.max(0,inT-0.05), outT)) parts.push(wb);
-  if (!parts.length) return null;
-  const sr=parts[0].buffer.sampleRate, len=Math.max(1,Math.round((outT-inT)*sr));
-  const ctx=new OfflineAudioContext(ADV.ch, len, sr), gain=ctx.createGain(); gain.connect(ctx.destination);
-  const base=e.vol/100, L=outT-inT, gp=gain.gain;
-  gp.setValueAtTime(e.fadeIn>0?0:base, 0);
-  if (e.fadeIn>0) gp.linearRampToValueAtTime(base, Math.min(L,e.fadeIn));
-  if (e.fadeOut>0){ gp.setValueAtTime(base, Math.max(0,L-e.fadeOut)); gp.linearRampToValueAtTime(0, L); }
-  for (const wb of parts){ const s=ctx.createBufferSource(); s.buffer=wb.buffer; s.connect(gain);
-    const when=wb.timestamp-inT; if (when>=0) s.start(when); else if (-when<wb.duration) s.start(0,-when); }
+// Mix the trimmed clip sound and the music, apply levels and fades, at a standard sample rate.
+async function renderAudio(at, inT, outT, e, speed){
+  const parts=[];
+  if (at){ const sink=new MB.AudioBufferSink(at); for await (const wb of sink.buffers(Math.max(0,inT-0.05), outT)) parts.push(wb); }
+  const mbuf = MUS.el ? await musicBuffer().catch(()=>null) : null;
+  if (!parts.length && !mbuf) return null;
+  // Encoders only accept standard sample rates, so anything else (e.g. a 12 kHz mic) is converted to 48 kHz.
+  const srcRate = parts.length ? parts[0].buffer.sampleRate : 48000, sr = (srcRate===44100||srcRate===48000) ? srcRate : 48000;
+  const L=(outT-inT)/speed, len=Math.max(1,Math.round(L*sr));
+  const ctx=new OfflineAudioContext(ADV.ch, len, sr);
+  // master fade (fades are set in source time, so they stretch with export speed)
+  const master=ctx.createGain(); master.connect(ctx.destination);
+  const fi=e.fadeIn/speed, fo=e.fadeOut/speed, mp=master.gain;
+  mp.setValueAtTime(fi>0?0:1, 0);
+  if (fi>0) mp.linearRampToValueAtTime(1, Math.min(L,fi));
+  if (fo>0){ mp.setValueAtTime(1, Math.max(0,L-fo)); mp.linearRampToValueAtTime(0, L); }
+  if (parts.length){
+    const cg=ctx.createGain(); cg.gain.value=e.vol/100; cg.connect(master);
+    for (const wb of parts){ const s=ctx.createBufferSource(); s.buffer=wb.buffer; s.connect(cg);
+      const when=wb.timestamp-inT; if (when>=0) s.start(when); else if (-when<wb.duration) s.start(0,-when); }
+  }
+  if (mbuf){
+    const mg=ctx.createGain(); mg.gain.value=MUS.level/100; mg.connect(master);
+    const s=ctx.createBufferSource(); s.buffer=mbuf; s.loop=MUS.loop; s.connect(mg);
+    const off=Math.min(MUS.start, Math.max(0,mbuf.duration-0.01)); s.start(0, off);
+  }
   return await ctx.startRendering();
 }
 if (!MB){ $("#advOn").disabled=true; }
@@ -1030,6 +1154,7 @@ document.addEventListener("keydown",e=>{
   else if (k==="i") $("#setIn").click();
   else if (k==="o") $("#setOut").click();
   else if (k==="l") $("#loopBtn").click();
+  else if (k==="m") $("#muteBtn").click();
   else if (k==="s") saveFrame();
   else if (k==="home" && v){ v.currentTime=cur.e.inT; }
   else if (k==="end" && v){ v.currentTime=cur.e.outT??v.duration; }
