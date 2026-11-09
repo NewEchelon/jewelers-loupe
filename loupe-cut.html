@@ -233,7 +233,30 @@ input[type=range]{width:100%;accent-color:var(--brass)}
       <label class="check"><input type="checkbox" id="clipSound" checked> Include clip sound</label>
       <div class="slider"><label for="clipVol">Clip sound</label><input type="range" id="clipVol" min="0" max="200" value="100"><span id="clipVolV">100%</span></div>
       <div class="field"><label for="outSpeed">Export speed</label>
-        <select id="outSpeed"><option value="0.5">0.5× slow-mo</option><option value="1" selected>1× normal</option><option value="2">2× fast</option></select></div>
+        <select id="outSpeed">
+          <optgroup label="Slow motion">
+            <option value="0.1">0.1× · 10 times slower</option>
+            <option value="0.25">0.25× · 4 times slower</option>
+            <option value="0.5">0.5× · half speed</option>
+            <option value="0.75">0.75×</option>
+          </optgroup>
+          <option value="1" selected>1× · normal</option>
+          <optgroup label="Faster">
+            <option value="1.25">1.25×</option>
+            <option value="1.5">1.5×</option>
+            <option value="2">2× · double speed</option>
+            <option value="3">3×</option>
+            <option value="4">4×</option>
+          </optgroup>
+          <optgroup label="Time-lapse">
+            <option value="8">8×</option>
+            <option value="16">16×</option>
+          </optgroup>
+          <option value="custom">Custom…</option>
+        </select></div>
+      <div class="field" id="speedCustomRow" hidden><label for="outSpeedCustom">Custom speed</label>
+        <div style="display:flex;gap:6px;align-items:center"><input type="number" id="outSpeedCustom" min="0.1" max="16" step="0.05" value="1" style="flex:1"><span style="font:12px var(--mono);color:var(--muted)">×</span></div></div>
+      <p class="hint" id="speedNote"></p>
     </div>
 
     <div class="sec" id="musicSec">
@@ -628,7 +651,7 @@ function syncUI(){
   $("#clipVol").value=e.vol; $("#clipVolV").textContent=e.vol+"%";
   $("#clipSound").checked = e.sound!==false; $("#clipVol").disabled = e.sound===false;
   $("#musicSec").hidden=!vid;
-  $("#outSpeed").value=String(e.outSpeed);
+  syncSpeed();
   $("#transport").style.display = vid?"":"none";
   document.querySelector(".timeline").style.display = vid?"":"none";
   $("#clipSec").hidden=!vid;
@@ -650,7 +673,26 @@ $("#adjReset").addEventListener("click",()=>{ if(cur){ Object.assign(cur.e,{b:10
 $("#fadeIn").addEventListener("input",e=>{ ed("fadeIn",+e.target.value); $("#fadeInV").textContent=e.target.value+" s"; });
 $("#fadeOut").addEventListener("input",e=>{ ed("fadeOut",+e.target.value); $("#fadeOutV").textContent=e.target.value+" s"; });
 $("#clipVol").addEventListener("input",e=>{ ed("vol",+e.target.value); $("#clipVolV").textContent=e.target.value+"%"; });
-$("#outSpeed").addEventListener("change",e=>ed("outSpeed",+e.target.value));
+const SPEEDS=[0.1,0.25,0.5,0.75,1,1.25,1.5,2,3,4,8,16];
+function syncSpeed(){
+  if (!cur) return;
+  const sp=cur.e.outSpeed||1, preset=SPEEDS.includes(sp);
+  if (!(document.activeElement===$("#outSpeed") && $("#outSpeed").value==="custom")) $("#outSpeed").value = preset && !cur.e.customSpeed ? String(sp) : "custom";
+  $("#speedCustomRow").hidden = $("#outSpeed").value!=="custom";
+  if (document.activeElement!==$("#outSpeedCustom")) $("#outSpeedCustom").value=sp;
+  const v=cur.el, d=isFinite(v.duration)?v.duration:0, span=(cur.e.outT??d)-cur.e.inT, len=span/sp;
+  let note = sp===1 ? "" : `The exported clip will be ${fmt(len)} long (trimmed section is ${fmt(span)}).`;
+  if (sp<1 && !(typeof ADV!=="undefined" && ADV.on)) note += ` A simple export takes as long as the result, so this one takes about ${fmt(len)}. Advanced encoding is usually faster.`;
+  if (sp>1 && cur.e.sound!==false) note += (typeof ADV!=="undefined" && ADV.on) ? " Clip sound is left out at this speed." : " Clip sound is sped up too and may cut out at high speeds.";
+  $("#speedNote").textContent=note; $("#speedNote").hidden=!note;
+}
+function setSpeed(v){ if(!cur) return; v=Math.min(16,Math.max(0.1,+v||1)); cur.e.outSpeed=v; syncSpeed(); updateTime(); if (typeof syncAdv==="function") syncAdv(); }
+$("#outSpeed").addEventListener("change",e=>{
+  if (!cur) return;
+  if (e.target.value==="custom"){ cur.e.customSpeed=true; $("#speedCustomRow").hidden=false; $("#outSpeedCustom").focus(); $("#outSpeedCustom").select(); return; }
+  cur.e.customSpeed=false; setSpeed(e.target.value); });
+$("#outSpeedCustom").addEventListener("input",e=>{ const v=parseFloat(e.target.value); if (v>=0.1 && v<=16){ cur.e.customSpeed=true; setSpeed(v); } });
+$("#outSpeedCustom").addEventListener("change",e=>{ setSpeed(e.target.value); e.target.value=cur.e.outSpeed; });
 
 // Caption & logo (shared, remembered)
 const saveCap=()=>store.set("cap",G.cap), saveLogo=()=>{ try{ localStorage.setItem("loupecut:logo",JSON.stringify(G.logo)); }catch(e){ const l={...G.logo,src:""}; store.set("logo",l); } };
@@ -736,6 +778,7 @@ function updateTime(){
   const d=isFinite(v.duration)?v.duration:0, e=cur.e, outT=e.outT??d;
   $("#playBtn").textContent = v.paused ? "▶ Play" : "❚❚ Pause";
   $("#timeRead").innerHTML = `${fmt(v.currentTime)} <i>/ ${fmt(d)}</i>`;
+  if (!updateTime._last || updateTime._last!==e.inT+"|"+outT+"|"+e.outSpeed){ updateTime._last=e.inT+"|"+outT+"|"+e.outSpeed; syncSpeed(); }
   $("#inRead").textContent=fmt(e.inT); $("#outRead").textContent=fmt(outT); $("#lenRead").textContent=fmt((outT-e.inT)/(e.outSpeed||1));
   if (d){ const p=x=>(x/d*100)+"%";
     $("#ph").style.left=p(v.currentTime); $("#hIn").style.left=p(e.inT); $("#hOut").style.left=p(outT);
@@ -916,6 +959,7 @@ function exportHintText(){
   return (ADV.on && MB) ? "Advanced export works through every frame with your edits, usually faster than playing the clip. You can use other windows while it runs."
     : "Export plays the trimmed section once and records it with your edits and sound. Keep this window visible while it runs."; }
 function syncAdv(){
+  if (cur && cur.kind==="video") syncSpeed();
   if (cur && cur.kind==="video" && !exporting){ $("#exportHint").textContent=exportHintText(); $("#exportHint").style.color=""; }
   $("#advOn").checked=ADV.on; $("#adv").hidden=!ADV.on || !MB;
   $("#outQ").closest(".field").hidden = ADV.on && !!MB;
@@ -1030,7 +1074,8 @@ async function exportAdvanced(it){
     if (!hw) throw new Error(`${CODEC_INFO[ADV.codec].name} can't encode ${W}×${H} with these settings on this computer`);
     const hwNote = hw===ADV.hw ? "" : ` Used the ${hw==="prefer-software"?"software":hw==="prefer-hardware"?"hardware":"automatic"} encoder because the ${ADV.hw==="prefer-hardware"?"hardware":"software"} one isn't available for ${CODEC_INFO[ADV.codec].name}.`;
     const vsrc=new MB.CanvasSource(c,{codec:ADV.codec, quality, keyFrameInterval:ADV.kf, hardwareAcceleration:hw, latencyMode:"quality"});
-    output.addVideoTrack(vsrc, ADV.fps?{frameRate:ADV.fps}:{});
+    const trackFps = ADV.fps || (speed!==1 ? Math.min(60, Math.max(24, Math.round(it.fps||30))) : 0);
+    output.addVideoTrack(vsrc, trackFps?{frameRate:trackFps}:{});
     let asrc=null, audio=null, audioNote="";
     if (ADV.ac!=="none" && (at || MUS.el)){
       hint.textContent="Preparing sound…";
@@ -1074,8 +1119,9 @@ async function exportAdvanced(it){
       hint.textContent=`Encoding ${Math.round(pct*100)}% · ${rate.toFixed(1)}× real time · about ${Math.max(0,Math.ceil(eta))} s left`;
       if (Math.random()<0.15){ layoutOut(); octx.drawImage(c,0,0,out.width,out.height); }
     };
-    if (ADV.fps){
-      const n=Math.max(1,Math.round(outLen*ADV.fps)), dt=1/ADV.fps;
+    const outFps = ADV.fps || (speed!==1 ? Math.min(60, Math.max(24, Math.round(it.fps||30))) : 0);
+    if (outFps){
+      const n=Math.max(1,Math.round(outLen*outFps)), dt=1/outFps;
       const ts=(function*(){ for(let i=0;i<n;i++) yield inT+i*dt*speed; })();
       let i=0;
       for await (const wc of sink.canvasesAtTimestamps(ts)){ if (cancelled) break;
