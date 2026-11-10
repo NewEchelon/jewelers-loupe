@@ -38,7 +38,7 @@ button,select,input,textarea{font:inherit;color:inherit}
 select,input[type=number],input[type=text],textarea{background:var(--raise);border:1px solid var(--line);border-radius:6px;padding:6px 8px;min-width:0}
 textarea{resize:vertical;width:100%}
 
-.layout{display:grid;grid-template-columns:220px 1fr 320px;min-height:0}
+.layout{display:grid;grid-template-columns:250px 1fr 320px;min-height:0}
 .lib{border-right:1px solid var(--line);background:var(--surface);overflow-y:auto;padding:12px;display:grid;align-content:start;gap:8px}
 .lib h2,.sec h2{margin:0;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);display:flex;justify-content:space-between;align-items:center}
 .item{display:grid;grid-template-columns:64px 1fr;gap:8px;align-items:center;padding:6px;border-radius:8px;border:1px solid transparent;cursor:pointer;background:transparent;text-align:left;width:100%}
@@ -48,6 +48,25 @@ textarea{resize:vertical;width:100%}
 .item div{min-width:0}
 .item b{display:block;font-weight:500;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .item span{font:11px var(--mono);color:var(--muted)}
+.itemrow{position:relative}
+.itemrow .add{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:26px;height:26px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--brass);cursor:pointer;font-size:16px;line-height:1;padding:0;opacity:.85}
+.itemrow .add:hover{opacity:1;border-color:var(--brass)}
+.itemrow .item{padding-right:38px}
+.seqbox{border-top:1px solid var(--line);padding-top:12px;margin-top:6px;display:grid;gap:8px}
+.seqlist{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.seqitem{display:grid;grid-template-columns:16px 44px 1fr auto;gap:6px;align-items:center;padding:4px;border-radius:6px;background:var(--raise)}
+.seqitem .num{font:11px var(--mono);color:var(--brass);text-align:center}
+.seqitem canvas{width:44px;height:33px;border-radius:3px;background:#000;display:block}
+.seqitem .mid{min-width:0}
+.seqitem b{display:block;font-weight:500;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.seqitem span{font:11px var(--mono);color:var(--muted)}
+.seqitem input{width:52px;padding:2px 4px;font:11px var(--mono)}
+.seqitem .btns{display:flex}
+.seqitem .btns .btn{padding:2px 5px}
+.seqctl{display:grid;gap:6px}
+.seqctl > label,.seqrow label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.seqrow{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:center}
+.seqpos{font:12px var(--mono);color:var(--muted);text-align:center;min-height:1em}
 .drop{border:1px dashed var(--line);border-radius:8px;padding:14px 10px;text-align:center;color:var(--muted);font-size:12.5px}
 
 .center{display:grid;grid-template-rows:1fr auto auto;min-width:0;min-height:0}
@@ -132,6 +151,24 @@ input[type=range]{width:100%;accent-color:var(--brass)}
     <h2>Library <span id="libCount"></span></h2>
     <div id="libList" style="display:grid;gap:4px"></div>
     <div class="drop" id="libDrop">Drag clips and photos here, or use <b>Open files</b>.</div>
+    <div class="seqbox">
+      <h2>Sequence <span id="seqTotal"></span></h2>
+      <ol class="seqlist" id="seqList"></ol>
+      <p class="hint" id="seqEmpty">Click <b>+</b> on a clip or photo to add it. Each one keeps its own trim, framing, adjustments, speed and sound.</p>
+      <div id="seqCtl" class="seqctl" hidden>
+        <label for="seqTrans">Between clips</label>
+        <select id="seqTrans"><option value="cut">Cut</option><option value="crossfade">Crossfade</option><option value="black">Fade through black</option></select>
+        <div id="seqTdurRow" class="seqrow"><label for="seqTdur">Length</label>
+          <select id="seqTdur"><option value="0.25">0.25 s</option><option value="0.5">0.5 s</option><option value="1">1 s</option><option value="1.5">1.5 s</option><option value="2">2 s</option></select></div>
+        <label for="seqShape">Frame shape</label>
+        <select id="seqShape"><option value="first">Same as first clip</option><option value="orig">Original</option><option value="1">1:1 square</option><option value="0.8">4:5 portrait</option><option value="0.5625">9:16 Reels &amp; Stories</option><option value="1.7778">16:9 wide</option></select>
+        <button class="btn" id="seqPlay">▶ Play sequence</button>
+        <span class="seqpos" id="seqPos"></span>
+        <button class="btn primary" id="seqExport">Export sequence</button>
+        <p class="hint tight" id="seqHint">Uses the Export settings on the right (size, quality, or Advanced encoding). Double-click a clip in the list to edit it.</p>
+        <button class="btn small ghost" id="seqClear">Clear sequence</button>
+      </div>
+    </div>
   </aside>
 
   <section class="center">
@@ -477,9 +514,9 @@ function drawLogo(g,W,H){
 }
 
 /* ---------- Preview sizing & loop ---------- */
-function layoutOut(){
-  if (!cur) return;
-  const v=$("#view").getBoundingClientRect(), {W,H}=outDims(cur,0);
+function layoutOut(){ if (!cur) return; const {W,H}=outDims(cur,0); layoutFor(W,H); }
+function layoutFor(W,H){
+  const v=$("#view").getBoundingClientRect();
   const maxW=v.width-32, maxH=v.height-32, k=Math.min(maxW/W, maxH/H);
   const cw=Math.max(1,Math.floor(W*k)), ch=Math.max(1,Math.floor(H*k)), dpr=window.devicePixelRatio||1;
   out.style.width=cw+"px"; out.style.height=ch+"px";
@@ -488,7 +525,8 @@ function layoutOut(){
 }
 new ResizeObserver(layoutOut).observe($("#view"));
 function tick(){
-  if (cur && !exporting){
+  if (SEQ.playing && !exporting){ seqTick(); }
+  else if (cur && !exporting){
     layoutOut();
     // Fades show while playing; a paused frame shows the picture so you can edit it.
     const t = cur.kind==="video" && !cur.el.paused ? cur.el.currentTime : null;
@@ -499,6 +537,7 @@ function tick(){
       if (cur.audio) cur.audio.clip.gain.value = fadeGain(cur, el.currentTime);
       musicSync(cur);
       updateTime();
+      if (SEQ.list.length && SEQ.durKey!==SEQ.list.map(entryDur).join("|")) renderSeq();
     }
   }
   requestAnimationFrame(tick);
@@ -621,18 +660,23 @@ function thumb(it){
 function renderLib(){
   const L=$("#libList"); L.innerHTML="";
   items.forEach(it=>{
+    const row=document.createElement("div"); row.className="itemrow";
     const b=document.createElement("button"); b.className="item"+(it===cur?" active":"");
     const c=document.createElement("canvas"); c.width=128; c.height=96; if(it.thumb) c.getContext("2d").drawImage(it.thumb,0,0);
     const d=document.createElement("div"); const nm=document.createElement("b"); nm.textContent=it.name; nm.title=it.name;
     const meta=document.createElement("span");
     meta.textContent = it.kind==="video" ? (isFinite(it.el.duration)?fmt(it.el.duration):"video") : "photo";
-    d.append(nm,meta); b.append(c,d); b.addEventListener("click",()=>select(it)); L.appendChild(b);
+    d.append(nm,meta); b.append(c,d); b.addEventListener("click",()=>select(it));
+    const add=document.createElement("button"); add.className="add"; add.textContent="+"; add.title="Add to sequence"; add.setAttribute("aria-label","Add "+it.name+" to sequence");
+    add.addEventListener("click",ev=>{ ev.stopPropagation(); addToSeq(it); });
+    row.append(b,add); L.appendChild(row);
   });
   $("#libCount").textContent=items.length||"";
   $("#welcome").hidden=items.length>0;
 }
 function select(it){
   if (exporting) return;
+  if (SEQ.playing) seqStop();
   if (cur && cur.kind==="video") cur.el.pause();
   cur=it; renderLib(); syncUI();
   if (it.kind==="video"){ it.el.volume=1; audioFor(it); setSpk(); drawWave(it); }
@@ -832,7 +876,8 @@ function saveFrame(){ if(!cur||exporting) return; const v=vid();
   const {W,H}=outDims(cur,0); const c=document.createElement("canvas"); c.width=W; c.height=H;
   draw(c.getContext("2d"),W,H,cur, v ? null : null); // no fade on stills
   stillBlob(c, b=>b&&download(b,`${baseName(cur.name)}_frame_${v?fmt(v.currentTime).replace(/[:.]/g,"-"):""}.${stillExt()}`)); flashNote("Frame saved to Downloads"); }
-$("#exportBtn").addEventListener("click",()=>{ if(!cur) return; if (exporting){ exporting.cancel(); return; }
+$("#exportBtn").addEventListener("click",()=>{ if(!cur) return; if (exporting){ if (exporting.kind!=="seq") exporting.cancel(); return; }
+  if (SEQ.playing) seqStop();
   if (cur.kind!=="video") return exportPhoto(cur);
   (ADV.on && MB && cur.file) ? exportAdvanced(cur) : exportClip(cur); });
 function exportPhoto(it){ const c=renderStill(it,null); stillBlob(c, b=>b&&download(b,`${baseName(it.name)}_edit.${stillExt()}`)); flashNote("Photo saved to Downloads"); }
@@ -1182,6 +1227,281 @@ async function renderAudio(at, inT, outT, e, speed){
 if (!MB){ $("#advOn").disabled=true; }
 syncAdv(); if (ADV.on) checkSupport();
 
+/* ---------- Sequence: stitch clips and photos into one video ---------- */
+const SEQ = { list:[], trans: store.get("seqTrans","crossfade"), tdur: store.get("seqTdur",0.5), shape: store.get("seqShape","first"),
+  playing:false, t0:0, T:0, nextId:1, durKey:"" };
+const isVid = it => it.kind==="video";
+function entryDur(en){
+  const it=en.it;
+  if (!isVid(it)) return en.still;
+  const d=isFinite(it.el.duration)?it.el.duration:0, e=it.e;
+  return Math.max(0.1, ((e.outT??d)-e.inT)/(e.outSpeed||1));
+}
+// Where each entry sits on the output timeline.
+function seqLayout(){
+  const n=SEQ.list.length, durs=SEQ.list.map(entryDur);
+  let D = SEQ.trans==="cut" ? 0 : SEQ.tdur;
+  if (n>1) D=Math.min(D, ...durs.map(d=>d/2));
+  if (n<2) D=0;
+  const out=[]; let t=0;
+  SEQ.list.forEach((en,i)=>{ const start = (i>0 && SEQ.trans==="crossfade") ? t-D : t;
+    out.push({en, it:en.it, i, start, dur:durs[i], end:start+durs[i]}); t=start+durs[i]; });
+  const total = out.length ? out[out.length-1].end : 0;
+  const first=out[0], last=out[out.length-1];
+  const fadeIn = first ? (first.it.e.fadeIn||0)/(isVid(first.it)?(first.it.e.outSpeed||1):1) : 0;
+  const fadeOut = last ? (last.it.e.fadeOut||0)/(isVid(last.it)?(last.it.e.outSpeed||1):1) : 0;
+  return {entries:out, total, D, fadeIn:Math.min(fadeIn,total/2), fadeOut:Math.min(fadeOut,total/2)};
+}
+function seqDims(cap){
+  const first=SEQ.list[0]; if (!first) return {W:1920,H:1080};
+  const it=first.it, aspect = SEQ.shape==="first" ? it.e.aspect : SEQ.shape;
+  return outDims({...it, e:{...it.e, aspect}}, cap);
+}
+// Brightness of the whole output at time T (fade from black at the start and to black at the end).
+function masterAt(L,T){ let g=1;
+  if (L.fadeIn>0 && T<L.fadeIn) g*=Math.max(0,T/L.fadeIn);
+  if (L.fadeOut>0 && T>L.total-L.fadeOut) g*=Math.max(0,(L.total-T)/L.fadeOut);
+  return g; }
+// Sound level of one entry at time T (transition ramps only).
+function entryGainAt(L,x,T){
+  const n=L.entries.length, D=L.D; let g=1;
+  if (SEQ.trans==="crossfade" && D>0){ if (x.i>0 && T<x.start+D) g*=Math.max(0,(T-x.start)/D); if (x.i<n-1 && T>x.end-D) g*=Math.max(0,(x.end-T)/D); }
+  if (SEQ.trans==="black" && D>0){ const h=D/2; if (x.i>0 && T<x.start+h) g*=Math.max(0,(T-x.start)/h); if (x.i<n-1 && T>x.end-h) g*=Math.max(0,(x.end-T)/h); }
+  return g;
+}
+const seqOff=[document.createElement("canvas"),document.createElement("canvas")];
+// Draw the sequence at output time T. frameFor(x) returns a decoded frame, or null to use the live element.
+async function composeAt(g,W,H,L,T,frameFor){
+  const act=L.entries.filter(x=>T>=x.start-1e-6 && T<x.end-1e-6);
+  if (!act.length && L.entries.length) act.push(T<=0?L.entries[0]:L.entries[L.entries.length-1]);
+  g.setTransform(1,0,0,1,0,0); g.globalAlpha=1; g.fillStyle="#000"; g.fillRect(0,0,W,H);
+  for (let k=0;k<act.length && k<2;k++){
+    const x=act[k], c=seqOff[k]; if (c.width!==W) c.width=W; if (c.height!==H) c.height=H;
+    const f = frameFor ? await frameFor(x,T) : null;
+    draw(c.getContext("2d"),W,H,x.it,null,f||undefined);   // t=null: the sequence handles fades
+    g.globalAlpha = k===0 ? 1 : (SEQ.trans==="crossfade" && L.D>0 ? Math.min(1,Math.max(0,(T-x.start)/L.D)) : 1);
+    g.drawImage(c,0,0); g.globalAlpha=1;
+  }
+  let dark=1-masterAt(L,T);
+  if (SEQ.trans==="black" && L.D>0){ const h=L.D/2;
+    for (let i=1;i<L.entries.length;i++){ const b=L.entries[i].start, dt=Math.abs(T-b); if (dt<h) dark=Math.max(dark,1-dt/h); } }
+  if (dark>0){ g.fillStyle=`rgba(0,0,0,${Math.min(1,dark)})`; g.fillRect(0,0,W,H); }
+}
+
+/* ----- Sequence panel ----- */
+function renderSeq(){
+  const ol=$("#seqList"); ol.innerHTML="";
+  const L=seqLayout();
+  L.entries.forEach((x,idx)=>{
+    const li=document.createElement("li"); li.className="seqitem";
+    const num=document.createElement("span"); num.className="num"; num.textContent=idx+1;
+    const c=document.createElement("canvas"); c.width=64; c.height=48; if (x.it.thumb) c.getContext("2d").drawImage(x.it.thumb,0,0,64,48);
+    const mid=document.createElement("div"); mid.className="mid";
+    const nm=document.createElement("b"); nm.textContent=x.it.name; nm.title=x.it.name;
+    const meta=document.createElement("span");
+    if (isVid(x.it)){ const sp=x.it.e.outSpeed||1; meta.textContent=fmt(x.dur)+(sp!==1?` · ${sp}×`:""); }
+    else { const inp=document.createElement("input"); inp.type="number"; inp.min="0.5"; inp.max="60"; inp.step="0.5"; inp.value=x.en.still; inp.id="still"+x.en.id;
+      inp.setAttribute("aria-label","Seconds on screen"); inp.addEventListener("change",()=>{ x.en.still=Math.min(60,Math.max(0.5,+inp.value||3)); renderSeq(); });
+      meta.append(inp," s"); }
+    mid.append(nm,meta);
+    const btns=document.createElement("div"); btns.className="btns";
+    const mk=(t,title,fn,dis)=>{ const b=document.createElement("button"); b.className="btn small ghost"; b.textContent=t; b.title=title; b.disabled=!!dis||SEQ.playing||!!exporting; b.addEventListener("click",fn); return b; };
+    btns.append(
+      mk("↑","Move earlier",()=>{ const a=SEQ.list; [a[idx-1],a[idx]]=[a[idx],a[idx-1]]; renderSeq(); }, idx===0),
+      mk("↓","Move later",()=>{ const a=SEQ.list; [a[idx+1],a[idx]]=[a[idx],a[idx+1]]; renderSeq(); }, idx===L.entries.length-1),
+      mk("✕","Remove from sequence",()=>{ SEQ.list.splice(idx,1); renderSeq(); }));
+    li.append(num,c,mid,btns);
+    li.addEventListener("dblclick",()=>select(x.it));
+    ol.appendChild(li);
+  });
+  const has=SEQ.list.length>0;
+  $("#seqEmpty").hidden=has; $("#seqCtl").hidden=!has;
+  $("#seqTotal").textContent = has ? fmt(L.total) : "";
+  $("#seqExport").disabled = !MB || SEQ.list.length<1 || (!!exporting && exporting.kind!=="seq");
+  $("#seqPlay").disabled = !!exporting;
+  if (!MB) $("#seqHint").textContent="Exporting a sequence needs Chrome.";
+  SEQ.durKey=SEQ.list.map(entryDur).join("|");
+}
+function addToSeq(it){ SEQ.list.push({id:SEQ.nextId++, it, still:3}); renderSeq(); flashNote(`Added to sequence (${SEQ.list.length})`); }
+$("#seqTrans").value=SEQ.trans; $("#seqTdur").value=String(SEQ.tdur); $("#seqShape").value=SEQ.shape;
+$("#seqTrans").addEventListener("change",e=>{ SEQ.trans=e.target.value; store.set("seqTrans",SEQ.trans); $("#seqTdurRow").hidden=SEQ.trans==="cut"; renderSeq(); });
+$("#seqTdur").addEventListener("change",e=>{ SEQ.tdur=+e.target.value; store.set("seqTdur",SEQ.tdur); renderSeq(); });
+$("#seqShape").addEventListener("change",e=>{ SEQ.shape=e.target.value; store.set("seqShape",SEQ.shape); });
+$("#seqTdurRow").hidden=SEQ.trans==="cut";
+$("#seqClear").addEventListener("click",()=>{ if (SEQ.playing) seqStop(); SEQ.list=[]; renderSeq(); });
+
+/* ----- Sequence preview playback ----- */
+function seqPlay(){
+  if (!SEQ.list.length || exporting) return;
+  if (cur && isVid(cur)) cur.el.pause();
+  SEQ.playing=true; SEQ.t0=performance.now(); $("#seqPlay").textContent="■ Stop"; renderSeq();
+  if (!AC){ const C=window.AudioContext||window.webkitAudioContext; if (C) AC=new C(); }
+  if (AC && AC.state!=="running") AC.resume().catch(()=>{});
+}
+function seqStop(){
+  SEQ.playing=false; $("#seqPlay").textContent="▶ Play sequence";
+  SEQ.list.forEach(en=>{ if (isVid(en.it)) en.it.el.pause(); });
+  if (MUS.el) MUS.el.pause();
+  if (cur && isVid(cur) && cur.audio) cur.audio.clip.gain.value=fadeGain(cur,cur.el.currentTime);
+  $("#seqPos").textContent=""; renderSeq();
+}
+$("#seqPlay").addEventListener("click",()=>SEQ.playing?seqStop():seqPlay());
+function seqTick(){
+  const L=seqLayout(), T=(performance.now()-SEQ.t0)/1000;
+  if (T>=L.total){ seqStop(); return; }
+  const {W,H}=seqDims(0); layoutFor(W,H);
+  const active=new Set(L.entries.filter(x=>T>=x.start && T<x.end).map(x=>x.en.id));
+  const vol=G.muted?0:G.vol/100, m=masterAt(L,T);
+  L.entries.forEach(x=>{ if (!isVid(x.it)) return; const el=x.it.el, e=x.it.e;
+    if (!active.has(x.en.id)){ if (!el.paused && !L.entries.some(y=>y!==x && y.it===x.it && active.has(y.en.id))) el.pause(); return; }
+    const sp=e.outSpeed||1, s=e.inT+(T-x.start)*sp;
+    if (Math.abs(el.playbackRate-sp)>0.001) el.playbackRate=sp;
+    if (el.paused){ el.currentTime=s; el.play().catch(()=>{}); }
+    else if (Math.abs(el.currentTime-s)>0.3) el.currentTime=s;
+    const au=audioFor(x.it); if (au){ au.spk.gain.value=vol; au.clip.gain.value=(e.sound===false?0:e.vol/100)*entryGainAt(L,x,T)*m; }
+  });
+  composeAt(octx,out.width,out.height,L,T,null);
+  // music follows the sequence clock
+  if (MUS.el){ let mt=MUS.start+T; if (MUS.loop&&MUS.dur>0) mt=((mt%MUS.dur)+MUS.dur)%MUS.dur;
+    if (!MUS.loop && mt>=MUS.dur){ MUS.el.pause(); }
+    else { musicGraph(); if (MUS.el.playbackRate!==1) MUS.el.playbackRate=1;
+      if (MUS.el.paused){ MUS.el.currentTime=mt; MUS.el.play().catch(()=>{}); } else if (Math.abs(MUS.el.currentTime-mt)>0.25) MUS.el.currentTime=mt;
+      if (MUS.gain) MUS.gain.gain.value=MUS.level/100*m; if (MUS.spk) MUS.spk.gain.value=vol; } }
+  $("#seqPos").textContent=`${fmt(T)} / ${fmt(L.total)}`;
+}
+
+/* ----- Sequence export ----- */
+function seqEncSettings(W,H){
+  if (ADV.on) return { cont:ADV.cont, codec:ADV.codec, kf:ADV.kf, hw:ADV.hw, ac:ADV.ac, ab:ADV.ab, ch:ADV.ch, web:ADV.web, fps:ADV.fps,
+    quality: ADV.rc==="abr" ? new MB.Quality({bitrate:ADV.br*1000, bitrateMode:ADV.cbr?"constant":"variable"}) : new MB.Quality({quality:rfToQuality(ADV.rf)}) };
+  const br=bitrates(W,H);
+  return { cont:"mp4", codec:"avc", kf:2, hw:"no-preference", ac:"aac", ab:Math.round(br.a/1000), ch:2, web:true, fps:0, quality:new MB.Quality({bitrate:br.v}), simple:true };
+}
+async function exportSequence(){
+  if (!MB || !SEQ.list.length) return;
+  if (SEQ.playing) seqStop();
+  const L=seqLayout(), {W,H}=seqDims(G.outSize), S=seqEncSettings(W,H);
+  const firstVid=L.entries.find(x=>isVid(x.it));
+  const F = S.fps || Math.min(60, Math.max(24, Math.round((firstVid&&firstVid.it.fps)||30)));
+  const c=document.createElement("canvas"); c.width=W; c.height=H; const g=c.getContext("2d");
+  let cancelled=false, output=null;
+  const hint=$("#exportHint"), hintWas=hint.textContent; hint.style.color="";
+  const setUi=(on)=>{ $("#prog").hidden=!on; $("#seqExport").textContent=on?"Cancel":"Export sequence"; $("#seqExport").classList.toggle("primary",!on);
+    ["#exportBtn","#frameBtn","#playBtn","#seqPlay","#advOn"].forEach(s=>$(s).disabled=on); renderSeq(); };
+  exporting={kind:"seq", cancel(){ cancelled=true; if (output) output.cancel().catch(()=>{}); }}; setUi(true);
+  const t0=performance.now(); const opened=[];
+  try{
+    // Codec: for the simple path, fall back if H.264 isn't available at this size.
+    if (S.simple){ for (const cdc of ["avc","vp9","av1"]){ if (await MB.canEncodeVideo(cdc,{width:W,height:H,quality:S.quality}).catch(()=>false)){ S.codec=cdc; break; } } }
+    hint.textContent="Checking encoder…";
+    let hw=null;
+    for (const h of [...new Set([S.hw,"no-preference","prefer-software","prefer-hardware"])]){
+      if (await MB.canEncodeVideo(S.codec,{width:W,height:H,quality:S.quality,hardwareAcceleration:h,frameRate:F}).catch(()=>false)){ hw=h; break; } }
+    if (!hw) throw new Error(`${CODEC_INFO[S.codec].name} can't encode ${W}×${H} on this computer`);
+    const fmtObj = S.cont==="webm" ? new MB.WebMOutputFormat() : new (S.cont==="mov"?MB.MovOutputFormat:MB.Mp4OutputFormat)({fastStart:S.web?"in-memory":false});
+    output=new MB.Output({format:fmtObj, target:new MB.BufferTarget()});
+    const vsrc=new MB.CanvasSource(c,{codec:S.codec, quality:S.quality, keyFrameInterval:S.kf, hardwareAcceleration:hw, latencyMode:"quality"});
+    output.addVideoTrack(vsrc,{frameRate:F});
+
+    // Open each video once per entry and plan which source time each output frame needs.
+    for (const x of L.entries){
+      if (!isVid(x.it)) continue;
+      const input=new MB.Input({source:new MB.BlobSource(x.it.file), formats:MB.ALL_FORMATS}); opened.push(input);
+      x.vt=await input.getPrimaryVideoTrack(); x.at=await input.getPrimaryAudioTrack();
+      const e=x.it.e, sp=e.outSpeed||1, d=isFinite(x.it.el.duration)?x.it.el.duration:0, outT=e.outT??d;
+      const n0=Math.ceil(x.start*F-1e-6), n1=Math.ceil(x.end*F-1e-6);
+      x.times=[]; for (let n=n0;n<n1;n++) x.times.push(Math.min(outT-0.001, e.inT+(n/F-x.start)*sp));
+      x.k=0; x.iter=null; x.last=null;
+    }
+    // Sound: every clip's sound at its place, transitions, music, overall fades.
+    let asrc=null, audio=null, audioNote="";
+    if (S.ac!=="none"){
+      hint.textContent="Preparing sound…";
+      audio=await renderSeqAudio(L,S.ch);
+      if (audio){
+        let pick=null;
+        outer: for (const ac of [S.ac, ...CONTAINER_AUDIO[S.cont].filter(a=>a!==S.ac)]) for (const ab of [...new Set([S.ab,128,96])]){
+          if (await MB.canEncodeAudio(ac,{numberOfChannels:audio.numberOfChannels,sampleRate:audio.sampleRate,bitrate:ab*1000}).catch(()=>false)){ pick={ac,ab}; break outer; } }
+        if (pick){ asrc=new MB.AudioBufferSource({codec:pick.ac, quality:new MB.Quality({bitrate:pick.ab*1000})}); output.addAudioTrack(asrc); }
+        else { audio=null; audioNote=" Saved without sound: no audio format available for this file type."; }
+      }
+    }
+    await output.start();
+    let aPos=0; const aRate=audio?audio.sampleRate:0;
+    const feedAudioTo=async(tOut)=>{ if(!asrc) return; const until=Math.min(audio.length,Math.ceil(tOut*aRate));
+      while(aPos<until){ const n=Math.min(aRate,audio.length-aPos), b=new AudioBuffer({length:n,numberOfChannels:audio.numberOfChannels,sampleRate:aRate});
+        for(let ch=0;ch<audio.numberOfChannels;ch++) b.copyToChannel(audio.getChannelData(ch).subarray(aPos,aPos+n),ch); await asrc.add(b); aPos+=n; } };
+
+    const frameFor=async(x)=>{
+      if (!isVid(x.it)) return null;
+      if (!x.iter){ const sink=new MB.CanvasSink(x.vt,{poolSize:3}); x.iter=sink.canvasesAtTimestamps(x.times)[Symbol.asyncIterator](); }
+      if (x.k<x.times.length){ const r=await x.iter.next(); x.k++; if (!r.done && r.value) x.last=r.value; }
+      return x.last ? {el:x.last.canvas, w:x.last.canvas.width, h:x.last.canvas.height} : null;
+    };
+    const N=Math.max(1,Math.round(L.total*F)), dt=1/F;
+    for (let n=0;n<N;n++){
+      if (cancelled) break;
+      const T=n*dt;
+      await composeAt(g,W,H,L,T,frameFor);
+      await vsrc.add(T,dt);
+      await feedAudioTo(T+dt);
+      // release decoders for entries that are finished
+      for (const x of L.entries) if (x.iter && T>=x.end && !x.closed){ x.closed=true; try{ await x.iter.return(); }catch(err){} }
+      const pct=(n+1)/N, secs=(performance.now()-t0)/1000, rate=(T+dt)/Math.max(0.001,secs);
+      $("#progBar").style.width=(pct*100)+"%";
+      hint.textContent=`Exporting sequence ${Math.round(pct*100)}% · ${rate.toFixed(1)}× real time · about ${Math.max(0,Math.ceil((L.total-T)/Math.max(0.01,rate)))} s left`;
+      if (n%6===0){ layoutFor(W,H); octx.drawImage(c,0,0,out.width,out.height); }
+    }
+    if (cancelled) throw new Error("cancelled");
+    await feedAudioTo(L.total+1);
+    hint.textContent="Finishing file…";
+    await output.finalize();
+    const blob=new Blob([output.target.buffer],{type:fmtObj.mimeType});
+    download(blob, `sequence_${SEQ.list.length}-clips_${stamp()}${fmtObj.fileExtension}`);
+    const secs=(performance.now()-t0)/1000;
+    hint.textContent=`Saved ${fmtMB(blob.size)} · ${fmt(L.total)} long · took ${secs<60?Math.round(secs)+" s":fmt(secs)}.${hw===S.hw?"":" Used the "+(hw==="prefer-software"?"software":"automatic")+" encoder."}${audioNote}`;
+    flashNote("Sequence saved to Downloads");
+  }catch(err){
+    if (cancelled){ hint.textContent=hintWas; flashNote("Export cancelled"); }
+    else { console.error(err); hint.style.color="var(--rec)"; hint.textContent=`Sequence export failed: ${err&&err.message?err.message:err}.`; }
+    try{ if (output && output.state!=="canceled" && output.state!=="finalized") await output.cancel(); }catch(e2){}
+  }finally{
+    for (const x of L.entries) if (x.iter && !x.closed) try{ await x.iter.return(); }catch(err){}
+    opened.forEach(i=>{ try{ i.dispose && i.dispose(); }catch(err){} });
+    exporting=null; setUi(false);
+  }
+}
+async function renderSeqAudio(L,ch){
+  const sr=48000, len=Math.max(1,Math.round(L.total*sr));
+  const clips=L.entries.filter(x=>isVid(x.it) && x.at && x.it.e.sound!==false && (x.it.e.outSpeed||1)===1);
+  const mbuf = MUS.el ? await musicBuffer().catch(()=>null) : null;
+  if (!clips.length && !mbuf) return null;
+  const ctx=new OfflineAudioContext(ch,len,sr), master=ctx.createGain(); master.connect(ctx.destination);
+  const mp=master.gain; mp.setValueAtTime(L.fadeIn>0?0:1,0);
+  if (L.fadeIn>0) mp.linearRampToValueAtTime(1,L.fadeIn);
+  if (L.fadeOut>0){ mp.setValueAtTime(1,Math.max(0,L.total-L.fadeOut)); mp.linearRampToValueAtTime(0,L.total); }
+  for (const x of clips){
+    const e=x.it.e, d=isFinite(x.it.el.duration)?x.it.el.duration:0, outT=e.outT??d;
+    const cg=ctx.createGain(), gp=cg.gain, base=e.vol/100; cg.connect(master);
+    // transition envelope, sampled into ramps
+    const pts=[x.start, x.start+0.005, x.start+L.D/2, x.start+L.D, x.end-L.D, x.end-L.D/2, x.end-0.005, x.end].filter(t=>t>=x.start&&t<=x.end).sort((a,b)=>a-b);
+    gp.setValueAtTime(0,0); gp.setValueAtTime(base*entryGainAt(L,x,x.start),x.start);
+    pts.forEach(t=>gp.linearRampToValueAtTime(base*entryGainAt(L,x,Math.min(t,x.end-1e-6)),t));
+    gp.setValueAtTime(0,x.end);
+    const sink=new MB.AudioBufferSink(x.at);
+    for await (const wb of sink.buffers(Math.max(0,e.inT-0.05), outT)){
+      const s=ctx.createBufferSource(); s.buffer=wb.buffer; s.connect(cg);
+      const when=x.start+(wb.timestamp-e.inT), off=Math.max(0,e.inT-wb.timestamp), stopAt=x.end;
+      if (off<wb.duration){ s.start(Math.max(0,when+off), off); s.stop(stopAt); }
+    }
+  }
+  if (mbuf){ const mg=ctx.createGain(); mg.gain.value=MUS.level/100; mg.connect(master);
+    const s=ctx.createBufferSource(); s.buffer=mbuf; s.loop=MUS.loop; s.connect(mg); s.start(0, Math.min(MUS.start, Math.max(0,mbuf.duration-0.01))); }
+  return await ctx.startRendering();
+}
+$("#seqExport").addEventListener("click",()=>{ if (exporting && exporting.kind==="seq"){ exporting.cancel(); return; } if (!exporting) exportSequence(); });
+renderSeq();
+
 /* ---------- Opening files ---------- */
 $("#openBtn").addEventListener("click",()=>$("#fileIn").click());
 $("#openBtn2").addEventListener("click",()=>$("#fileIn").click());
@@ -1194,7 +1514,7 @@ document.addEventListener("drop",e=>{ if(e.dataTransfer&&e.dataTransfer.files.le
 document.addEventListener("keydown",e=>{
   if (e.target.closest("input[type=text],textarea,select") || e.metaKey || e.ctrlKey) return;
   const k=e.key.toLowerCase(), v=vid();
-  if (k===" "){ e.preventDefault(); togglePlay(); }
+  if (k===" "){ e.preventDefault(); if (SEQ.playing) seqStop(); else togglePlay(); }
   else if (k==="arrowleft"){ e.preventDefault(); e.shiftKey && v ? (v.currentTime=Math.max(0,v.currentTime-1)) : step(-1); }
   else if (k==="arrowright"){ e.preventDefault(); e.shiftKey && v ? (v.currentTime=Math.min(v.duration,v.currentTime+1)) : step(1); }
   else if (k==="i") $("#setIn").click();
